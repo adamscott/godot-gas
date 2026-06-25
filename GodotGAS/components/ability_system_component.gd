@@ -76,6 +76,8 @@ func _ready() -> void:
 		attribute_changed.connect(_debug_attribute_changed)
 		effect_applied_to_target.connect(_debug_effect_applied_to_target)
 		gameplay_event_received.connect(_debug_gameplay_event_received)
+		active_effect_added.connect(_debug_active_effect_added)
+		active_effect_removed.connect(_debug_active_effect_removed)
 
 
 func _process(delta: float) -> void:
@@ -108,17 +110,16 @@ func _process(delta: float) -> void:
 ## Safely halts all abilities, removes all active effects, and clears internal state.
 ## Call this immediately before queue_free()'ing the owning Entity to prevent memory leaks and orphaned cues.
 func cleanup() -> void:
-	# 1. Forcefully abort all granted abilities that are currently executing
+	# 1. Forcefully abort all granted abilities
 	for ability in _active_abilities:
 		if ability.is_active:
 			ability.abort_ability()
 			
-	# 2. Remove all active effects (this reverses math, drops tags, and clears cues)
-	# We iterate backwards to safely modify the array while looping
+	# 2. Reverse math and drop tags, but SKIP the expensive array erasure
 	for i in range(_active_effects.size() - 1, -1, -1):
-		remove_active_effect(_active_effects[i])
+		remove_active_effect(_active_effects[i], true)
 		
-	# 3. Clear all tracking arrays and dictionaries
+	# 3. Clear all tracking arrays atomically in O(1) time
 	_active_inputs.clear()
 	_active_abilities.clear()
 	_active_tags.clear()
@@ -209,16 +210,28 @@ func can_afford_cost(effect: GameplayEffect, effect_level: float = 1.0) -> bool:
 		return true 
 	
 	for modifier in effect.modifiers:
-		if modifier.operation == GameplayEffectModifier.Operation.ADD:
-			var final_magnitude = modifier.calculate_magnitude(effect_level)
+		var attr = get_attribute(modifier.attribute_name)
+		if not attr:
+			return false
 			
-			if final_magnitude < 0:
-				var attr = get_attribute(modifier.attribute_name)
-				if attr:
-					if attr.current_value < abs(final_magnitude):
-						return false
-				else:
-					return false
+		var current_val = attr.current_value
+		var magnitude = modifier.calculate_magnitude(effect_level)
+		var projected_val = current_val
+		
+		match modifier.operation:
+			GameplayEffectModifier.Operation.ADD:
+				projected_val += magnitude
+			GameplayEffectModifier.Operation.MULTIPLY:
+				projected_val *= magnitude
+			GameplayEffectModifier.Operation.DIVIDE:
+				if magnitude != 0:
+					projected_val /= magnitude
+			GameplayEffectModifier.Operation.OVERRIDE:
+				projected_val = magnitude
+				
+		# If the proposed cost drops the resource below zero, we cannot afford it.
+		if projected_val < 0.0:
+			return false
 					
 	return true
 
@@ -259,25 +272,25 @@ func has_attribute(attribtue_name: String) -> bool:
 
 
 ## A helper to safely modify the current value of an attribute (Should not be used outside of this class).
-func _apply_attribute_change(attribute_name: String, amount: float, spec: GameplayEffectSpec = null) -> void:
+func _apply_attribute_change(attribute_name: String, amount: float, spec: GameplayEffectSpec = null) -> float:
 	for set in attribute_sets:
 		if attribute_name in set: 
 			var attr = set.get(attribute_name)
 			if attr is AttributeData:
-				
 				var old_value = attr.current_value 
 				var proposed_value = old_value + amount
 				
 				var final_value = set.pre_attribute_change(attribute_name, proposed_value)
+				var actual_delta = final_value - old_value
 				
-				# Only emit if the value actually changed.
 				if final_value != old_value:
 					attr.current_value = final_value
 					attribute_changed.emit(attribute_name, old_value, final_value, spec)
 					
-				return # Found it and processed it, stop searching
+				return actual_delta
 				
 	push_warning("GodotGAS: Attempted to modify '%s', but the ASC does not possess that attribute." % attribute_name)
+	return 0.0
 #endregion
 
 
@@ -369,10 +382,13 @@ func _execute_active_spec(spec: GameplayEffectSpec) -> void:
 		active_effect.applied_deltas = _apply_modifiers(spec)
 			
 	_active_effects.append(active_effect)
+	
+	# Broadcast to the UI and passive listeners
+	active_effect_added.emit(active_effect)
 
 
 ## Perfectly undoes an Active Effect's math and tags, and cleans it out of memory.
-func remove_active_effect(active_effect: ActiveGameplayEffect) -> void:
+func remove_active_effect(active_effect: ActiveGameplayEffect, skip_array_erase: bool = false) -> void:
 	for tag in active_effect.get_effect_def().granted_tags:
 		remove_tag(tag)
 		
@@ -380,8 +396,12 @@ func remove_active_effect(active_effect: ActiveGameplayEffect) -> void:
 		var reverse_delta = -active_effect.applied_deltas[attr_name]
 		_apply_attribute_change(attr_name, reverse_delta)
 		
-	if _active_effects.has(active_effect):
+	if not skip_array_erase and _active_effects.has(active_effect):
+		active_effect_removed.emit(active_effect)
 		_active_effects.erase(active_effect)
+	elif skip_array_erase:
+		# Still emit the signal for UI cleanup during a bulk wipe
+		active_effect_removed.emit(active_effect)
 
 
 ## Removes ALL active Gameplay Effects that are currently granting the specified tag.
@@ -450,10 +470,14 @@ func _apply_modifiers(spec: GameplayEffectSpec) -> Dictionary:
 			applied_deltas[attr_name] = delta
 			
 	# 3. Apply Final Aggregated Deltas
+	var final_clamped_deltas: Dictionary = {}
+	
 	for attr_name in applied_deltas:
-		_apply_attribute_change(attr_name, applied_deltas[attr_name], spec)
+		var actual_change = _apply_attribute_change(attr_name, applied_deltas[attr_name], spec)
+		if actual_change != 0.0:
+			final_clamped_deltas[attr_name] = actual_change
 		
-	return applied_deltas
+	return final_clamped_deltas
 #endregion
 
 
@@ -628,7 +652,7 @@ func _debug_gameplay_event_received(event_tag: StringName, payload: GameplayEffe
 
 func _debug_active_effect_added(active_effect: ActiveGameplayEffect) -> void:
 	var effect_name = _get_debug_spec_name(active_effect.spec)
-	var duration = active_effect.duration_remaining
+	var duration = active_effect.get_effect_def().duration if active_effect.get_effect_def().duration > 0.0 else "Infinite"
 	print_rich("[color=gray]> (DEBUG)[/color] [color=cyan]<%s>[/color] signal [color=orange][active_effect_added][/color] added [color=green]'%s'[/color] with duration [color=yellow]%s[/color]s" % [self.get_parent().name, effect_name, duration])
 
 func _debug_active_effect_removed(active_effect: ActiveGameplayEffect) -> void:

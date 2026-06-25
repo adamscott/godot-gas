@@ -143,7 +143,11 @@ func apply_effect_to_targets(effect_res: GameplayEffect, target_data: GameplayAb
 	if not effect_res or not target_data:
 		return
 		
-	var context = GameplayEffectContext.new(owner_asc.get_parent(), self)
+	# The instigator and the causer both default to the persistent parent entity (e.g., the Player).
+	# Do NOT pass `self` (the transient ability) as the causer.
+	var persistent_avatar = owner_asc.get_parent()
+	var context = GameplayEffectContext.new(persistent_avatar, persistent_avatar)
+	
 	context.target_data = target_data
 	var spec = GameplayEffectSpec.new(effect_res, context, ability_level)
 	
@@ -152,7 +156,6 @@ func apply_effect_to_targets(effect_res: GameplayEffect, target_data: GameplayAb
 		var target_asc = _find_asc_on_node(target)
 		if target_asc:
 			owner_asc.apply_effect_spec_to_target(spec, target_asc)
-			#target_asc.apply_effect_spec(spec)
 
 
 ## Internal helper to search for an ASC on a given node or its immediate children.
