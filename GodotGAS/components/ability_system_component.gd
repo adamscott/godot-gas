@@ -93,11 +93,15 @@ func _process(delta: float) -> void:
 		if effect_data.period > 0.0:
 			active_effect.time_until_next_tick -= delta
 			if active_effect.time_until_next_tick <= 0.0:
+				
 				# 1. Trigger Periodic Cues
 				for cue_tag in effect_data.periodic_cue_tags:
 					execute_cue(cue_tag, {"target": get_parent()})
+				
+				# 2. Broadcast Periodic Events (Wakes up passives!)
+				_trigger_effect_events(active_effect.spec)
 					
-				# 2. Apply the math natively (Bypasses initial application cues)
+				# 3. Apply the math natively
 				_apply_modifiers(active_effect.spec) 
 				
 				# Reset the clock for the next tick
@@ -345,6 +349,33 @@ func apply_effect_spec(spec: GameplayEffectSpec) -> bool:
 		if not has_tag(tag):
 			return false
 	
+	# 3. Handle Stacking & Refreshing
+	if effect.policy == GameplayEffect.DurationPolicy.DURATION:
+		if effect.stacking_policy == GameplayEffect.StackingPolicy.REFRESH_DURATION:
+			# Search to see if we already have this exact effect definition running
+			for active_effect in _active_effects:
+				if active_effect.spec.effect_def == effect:
+					# We found it! Reset its clock back to full.
+					active_effect.time_remaining = effect.duration
+					
+					# Re-trigger application cues so the player knows it refreshed!
+					for cue_tag in effect.application_cue_tags:
+						execute_cue(cue_tag, {"target": get_parent()})
+					
+					# Determine the source for the UI signals
+					var source_asc = null
+					if spec.context and spec.context.instigator:
+						source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+						
+					# Notify the Defender's UI that it was "received" again
+					effect_received.emit(source_asc, spec)
+					
+					# Wake up any passives for the refresh!
+					_trigger_effect_events(spec)
+					
+					# EXIT EARLY: We refreshed the old one, do not add the new one!
+					return true
+	
 	match effect.policy:
 		GameplayEffect.DurationPolicy.INSTANT:
 			_execute_instant_spec(spec)
@@ -358,9 +389,8 @@ func apply_effect_spec(spec: GameplayEffectSpec) -> bool:
 		
 	effect_received.emit(source_asc, spec)
 	
-	# 2. Convert injected tags (Miss, Crit, Block) into real Gameplay Events!
-	for dynamic_tag in spec.dynamic_tags:
-		send_gameplay_event(dynamic_tag, spec.context)
+	# Wake up any passives listening for this application!
+	_trigger_effect_events(spec)
 	
 	return true
 
@@ -616,6 +646,17 @@ func ability_local_input_released(input_id: int) -> void:
 
 
 #region Gameplay Events
+## Sweeps a spec and fires all static and dynamic events.
+func _trigger_effect_events(spec: GameplayEffectSpec) -> void:
+	# 1. Trigger static events defined by the designer in the Inspector
+	for event_tag in spec.effect_def.event_tags:
+		send_gameplay_event(event_tag, spec.context)
+		
+	# 2. Trigger dynamic events injected by Execution Calculations!
+	for dynamic_tag in spec.dynamic_tags:
+		send_gameplay_event(dynamic_tag, spec.context)
+
+
 ## Sends a global event to this ASC. If any granted abilities are listening for this tag, 
 ## they will attempt to activate and receive the payload.
 func send_gameplay_event(event_tag: StringName, payload: GameplayEffectContext = null) -> void:

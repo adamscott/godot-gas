@@ -15,7 +15,17 @@ enum DurationPolicy {
 	INFINITE # Applies math/tags permanently until explicitly removed. (e.g., Equipped Ring) 
 }
 
+## Defines the stacking behaviour for the effect.
+enum StackingPolicy { 
+	FREE,             # Can have infinite overlapping instances of this effect.
+	REFRESH_DURATION  # If applied again, resets the timer of the existing instance instead of adding a new one.
+}
+
 @export_category("Effect Rules")
+## How this effect behaves if it is applied while already active on the target.
+## FREE = multiple unique stacks, REFRESH_DURATION will refresh existing
+## NOTE: Does not override or decide 'if' a effect stacks
+@export var stacking_policy: StackingPolicy = StackingPolicy.FREE
 ## How long this effect persists on the target.
 @export var policy: DurationPolicy = DurationPolicy.INSTANT
 ## The lifespan of the effect in seconds. Only used if policy is DURATION.
@@ -47,5 +57,11 @@ enum DurationPolicy {
 
 @export_category("State Management")
 ## Tags granted to the target ASC for as long as this effect is active.
+## Not used for events, but state ie: 'Status.Stunned'
 ## NOTE: Instant effects do not grant tags.
 @export var granted_tags: Array[StringName] = []
+
+@export_category("Event Management")
+## Tags broadcasted directly to the target's ASC as Gameplay Events upon application (or periodic tick).
+## Ideal for waking up reactive passive abilities (e.g., 'Event.Damage.Taken').
+@export var event_tags: Array[StringName] = []
