@@ -87,28 +87,29 @@ func _ready() -> void:
 func _process(delta: float) -> void:
 	for i in range(_active_effects.size() - 1, -1, -1):
 		var active_effect = _active_effects[i]
-		var effect_data = active_effect.get_effect_def()
 		
 		# Handle Periodic Ticks
-		if effect_data.period > 0.0:
+		if active_effect.spec.period > 0.0:
 			active_effect.time_until_next_tick -= delta
 			if active_effect.time_until_next_tick <= 0.0:
 				
 				# 1. Trigger Periodic Cues
-				for cue_tag in effect_data.periodic_cue_tags:
+				for cue_tag in active_effect.spec.effect_def.periodic_cue_tags:
 					execute_cue(cue_tag, {"target": get_parent()})
 				
 				# 2. Broadcast Periodic Events (Wakes up passives!)
 				_trigger_effect_events(active_effect.spec)
 					
-				# 3. Apply the math natively
-				_apply_modifiers(active_effect.spec) 
+				# 3. Re-Evaluate and Apply the math natively
+				# Doing this per tick allows DoTs to dynamically update if attacker stats change!
+				_evaluate_spec(active_effect.spec) 
+				_commit_spec_math(active_effect.spec)
 				
 				# Reset the clock for the next tick
-				active_effect.time_until_next_tick += effect_data.period
+				active_effect.time_until_next_tick += active_effect.spec.period
 		
 		# Handle Expiration
-		if effect_data.policy == GameplayEffect.DurationPolicy.DURATION:
+		if active_effect.spec.effect_def.policy == GameplayEffect.DurationPolicy.DURATION:
 			active_effect.time_remaining -= delta
 			
 			if active_effect.time_remaining <= 0.0:
@@ -192,7 +193,7 @@ func can_activate_ability(ability: GameplayAbility, emit_failure: bool = false) 
 			ability_activation_failed.emit(ability, ActivationError.MISSING_TAG, {"tags": ability.activation_required_tags})
 		return false
 	
-	# 4. Check Resource Costs
+	# 4. Check Resource Costs, Fully supports ExecCalcs predicting math
 	if ability.cost_effect and not can_afford_cost(ability.cost_effect, ability.ability_level):
 		if emit_failure: 
 			ability_activation_failed.emit(ability, ActivationError.INSUFFICIENT_RESOURCES, {"effect": ability.cost_effect})
@@ -214,33 +215,25 @@ func _remove_active_ability(ability: GameplayAbility) -> void:
 
 ## Checks if the entity has enough resources to pay for a GameplayEffect cost.
 func can_afford_cost(effect: GameplayEffect, effect_level: float = 1.0) -> bool:
-	if not effect.modifiers: 
-		return true 
+	if not effect:
+		return true
+		
+	# 1. Generate a mock spec to hold the context for our calculations
+	var context = GameplayEffectContext.new(get_parent())
+	var spec = GameplayEffectSpec.new(effect, context, effect_level)
 	
-	for modifier in effect.modifiers:
-		var attr = get_attribute(modifier.attribute_name)
-		if not attr:
+	# 2. Evaluate the Spec (This runs the ExecCalcs to mutate magnitudes safely!)
+	_evaluate_spec(spec)
+	
+	# 3. Verify the predicted math against our actual attributes
+	for attr_name in spec.calculated_deltas:
+		var attr_data = get_attribute(attr_name)
+		var current_val = attr_data.current_value if attr_data else 0.0
+		
+		# If any resource drops below 0 after dynamic math, we cannot afford it!
+		if current_val + spec.calculated_deltas[attr_name] < 0.0:
 			return false
 			
-		var current_val = attr.current_value
-		var magnitude = modifier.calculate_magnitude(effect_level)
-		var projected_val = current_val
-		
-		match modifier.operation:
-			GameplayEffectModifier.Operation.ADD:
-				projected_val += magnitude
-			GameplayEffectModifier.Operation.MULTIPLY:
-				projected_val *= magnitude
-			GameplayEffectModifier.Operation.DIVIDE:
-				if magnitude != 0:
-					projected_val /= magnitude
-			GameplayEffectModifier.Operation.OVERRIDE:
-				projected_val = magnitude
-				
-		# If the proposed cost drops the resource below zero, we cannot afford it.
-		if projected_val < 0.0:
-			return false
-					
 	return true
 
 
@@ -348,6 +341,8 @@ func apply_effect_spec(spec: GameplayEffectSpec) -> bool:
 	for tag in effect.application_required_tags:
 		if not has_tag(tag):
 			return false
+			
+	_evaluate_spec(spec)
 	
 	# 3. Handle Stacking & Refreshing
 	if effect.policy == GameplayEffect.DurationPolicy.DURATION:
@@ -355,8 +350,8 @@ func apply_effect_spec(spec: GameplayEffectSpec) -> bool:
 			# Search to see if we already have this exact effect definition running
 			for active_effect in _active_effects:
 				if active_effect.spec.effect_def == effect:
-					# We found it! Reset its clock back to full.
-					active_effect.time_remaining = effect.duration
+					# We found it! Reset its clock back to full based on the dynamically altered Spec!
+					active_effect.time_remaining = spec.duration 
 					
 					# Re-trigger application cues so the player knows it refreshed!
 					for cue_tag in effect.application_cue_tags:
@@ -401,13 +396,14 @@ func _execute_instant_spec(spec: GameplayEffectSpec) -> void:
 	for cue_tag in spec.effect_def.application_cue_tags:
 		execute_cue(cue_tag, {"target": get_parent()})
 		
-	# 2. Apply Math
-	_apply_modifiers(spec)
+	# 2. Actually apply the mathematical damage/healing!
+	_commit_spec_math(spec)
 
 
 ## Processes effects that stay on the character over time.
 func _execute_active_spec(spec: GameplayEffectSpec) -> void:
-	var active_effect = ActiveGameplayEffect.new(spec)
+	# Note: Initializes using the dynamic 'spec' variable, not the static 'effect_def' variable!
+	var active_effect = ActiveGameplayEffect.new(spec) 
 	var effect = spec.effect_def
 	
 	# 1. Trigger Application Cues
@@ -419,8 +415,8 @@ func _execute_active_spec(spec: GameplayEffectSpec) -> void:
 		add_tag(tag)
 		
 	# 3. Apply Math and record it to reverse later (ONLY if not periodic)
-	if effect.period <= 0.0:
-		active_effect.applied_deltas = _apply_modifiers(spec)
+	if spec.period <= 0.0:
+		active_effect.applied_deltas = _commit_spec_math(spec)
 			
 	_active_effects.append(active_effect)
 	
@@ -455,36 +451,34 @@ func remove_effects_with_tag(tag: StringName) -> void:
 
 
 #region Math & Modifiers
-## Applies modifiers and Execution Calculations from a spec, returning a dictionary 
-## of the actual flat deltas applied. This handles pure math. No cues, no tags.
-func _apply_modifiers(spec: GameplayEffectSpec) -> Dictionary:
-	var applied_deltas: Dictionary = {}
+
+## STEP 1: Evaluates all Executions and Modifiers to predict the final mathematical changes.
+## This populates `spec.calculated_deltas` and allows ExecCalcs to mutate duration/magnitudes safely.
+func _evaluate_spec(spec: GameplayEffectSpec) -> void:
+	var projected_deltas: Dictionary = {}
 	
 	if not spec or not spec.effect_def:
-		return applied_deltas
+		return
 		
 	var effect = spec.effect_def
 	
-	# 1. Process Execution Calculations (Dynamic Math)
+	# 1. Process Execution Calculations (Dynamic Math & Spec Mutation)
 	for execution in effect.executions:
 		if execution:
-			# Pass the spec (which holds the caster context) and this ASC (the target)
+			# Executions can edit spec.duration, spec.period, spec.mutated_magnitudes, OR return flat deltas
 			var exec_deltas = execution.execute(spec, self)
 			
-			# Merge the resulting calculated deltas
 			for attr_name in exec_deltas:
-				if applied_deltas.has(attr_name):
-					applied_deltas[attr_name] += exec_deltas[attr_name]
-				else:
-					applied_deltas[attr_name] = exec_deltas[attr_name]
+				projected_deltas[attr_name] = projected_deltas.get(attr_name, 0.0) + exec_deltas[attr_name]
 
-	# 2. Process Standard Modifiers (Static/Curve Math)
+	# 2. Process Standard Modifiers
 	for mod in effect.modifiers:
 		if not mod or mod.attribute_name == "":
 			continue
 			
 		var attr_name = mod.attribute_name
-		var magnitude = mod.calculate_magnitude(spec.level)
+		# IMPORTANT: Pull magnitude from the mutated dictionary, NOT the base definition!
+		var magnitude = spec.mutated_magnitudes.get(attr_name, 0.0) 
 		
 		var current_val = 0.0
 		var attr_data = get_attribute(attr_name)
@@ -492,8 +486,6 @@ func _apply_modifiers(spec: GameplayEffectSpec) -> Dictionary:
 			current_val = attr_data.current_value
 			
 		var delta = 0.0
-		
-		# Convert operations into a flat delta so it can be merged safely
 		match mod.operation:
 			GameplayEffectModifier.Operation.ADD:
 				delta = magnitude
@@ -505,23 +497,29 @@ func _apply_modifiers(spec: GameplayEffectSpec) -> Dictionary:
 			GameplayEffectModifier.Operation.OVERRIDE:
 				delta = magnitude - current_val
 				
-		if applied_deltas.has(attr_name):
-			applied_deltas[attr_name] += delta
-		else:
-			applied_deltas[attr_name] = delta
+		projected_deltas[attr_name] = projected_deltas.get(attr_name, 0.0) + delta
 			
-	# 3. Apply Final Aggregated Deltas
+	# Save the final projections directly into the spec
+	spec.calculated_deltas = projected_deltas
+
+
+## STEP 2: Actually applies the pre-calculated deltas to the ASC's attributes.
+func _commit_spec_math(spec: GameplayEffectSpec) -> Dictionary:
 	var final_clamped_deltas: Dictionary = {}
 	
-	for attr_name in applied_deltas:
-		var actual_change = _apply_attribute_change(attr_name, applied_deltas[attr_name], spec)
+	if not spec or spec.calculated_deltas.is_empty():
+		return final_clamped_deltas
+	
+	# Physically modify the stats
+	for attr_name in spec.calculated_deltas:
+		var actual_change = _apply_attribute_change(attr_name, spec.calculated_deltas[attr_name], spec)
 		if actual_change != 0.0:
 			final_clamped_deltas[attr_name] = actual_change
 	
-	# NEW: Save the final results directly into the spec before returning!
+	# Update the spec to reflect the true reality of what happened (after stats clamped)
 	spec.calculated_deltas = final_clamped_deltas
-	
 	return final_clamped_deltas
+
 #endregion
 
 
@@ -700,17 +698,24 @@ func _debug_effect_applied_to_target(target_asc: AbilitySystemComponent, spec: G
 	print_rich("[color=gray]> (DEBUG)[/color] [color=cyan]<%s>[/color] signal [color=orange][effect_applied_to_target][/color] %s's ASC applied [color=green]'%s'[/color] to [color=cyan]%s's[/color] ASC" % [self.get_parent().name, self.get_parent().name, effect_name, target_asc.get_parent().name])
 
 
-func _debug_gameplay_event_received(event_tag: StringName, payload: GameplayEffectContext) -> void:
+func _debug_gameplay_event_received(event_tag: StringName, payload: Variant) -> void:
 	var payload_desc = "[color=red]Null Payload[/color]"
-	if payload and payload.instigator:
-		payload_desc = "Payload(From: [color=cyan]%s[/color])" % payload.instigator.name
+	
+	var instigator = null
+	if payload is GameplayEffectContext:
+		instigator = payload.instigator
+	elif payload is GameplayEffectSpec and payload.context:
+		instigator = payload.context.instigator
+		
+	if instigator:
+		payload_desc = "Payload(From: [color=cyan]%s[/color])" % instigator.name
 		
 	print_rich("[color=gray]> (DEBUG)[/color] [color=cyan]<%s>[/color] signal [color=orange][gameplay_event_received][/color] %s's ASC received [color=green]'%s'[/color] event with %s" % [self.get_parent().name, self.get_parent().name, event_tag, payload_desc])
 
 
 func _debug_active_effect_added(active_effect: ActiveGameplayEffect) -> void:
 	var effect_name = _get_debug_spec_name(active_effect.spec)
-	var duration = active_effect.get_effect_def().duration if active_effect.get_effect_def().duration > 0.0 else "Infinite"
+	var duration = active_effect.spec.duration if active_effect.spec.duration > 0.0 else "Infinite"
 	print_rich("[color=gray]> (DEBUG)[/color] [color=cyan]<%s>[/color] signal [color=orange][active_effect_added][/color] added [color=green]'%s'[/color] with duration [color=yellow]%s[/color]s" % [self.get_parent().name, effect_name, duration])
 
 func _debug_active_effect_removed(active_effect: ActiveGameplayEffect) -> void:

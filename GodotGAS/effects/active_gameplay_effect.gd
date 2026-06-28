@@ -32,10 +32,10 @@ func _init(in_spec: GameplayEffectSpec) -> void:
 	
 	var effect = spec.effect_def
 	if effect.policy == GameplayEffect.DurationPolicy.DURATION:
-		time_remaining = effect.duration
+		time_remaining = spec.duration
 		
-	if effect.period > 0.0:
-		time_until_next_tick = effect.period
+	if spec.period > 0.0:
+		time_until_next_tick = spec.period
 #endregion
 
 

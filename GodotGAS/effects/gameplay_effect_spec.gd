@@ -26,14 +26,37 @@ var dynamic_tags: Array[StringName] = []
 ## A dictionary populated by the ASC after modifiers are applied, storing the EXACT final clamped changes (e.g., {"Health": -50.0})
 var calculated_deltas: Dictionary = {}
 
+# ==========================================
+# MUTABLE STATE (The Source of Truth)
+# ==========================================
+## The runtime duration of the effect. Mutated by ExecCalcs before application.
+var duration: float = 0.0
+
+## The runtime period of the effect. Mutated by ExecCalcs before application.
+var period: float = 0.0
+
+## Dictionary tracking the runtime magnitude of each modifier.
+## Key: Attribute Name (String), Value: Magnitude (float)
+var mutated_magnitudes: Dictionary = {}
+# ==========================================
+
 
 #region Initialization
-## Initializes the live effect instance.
+## Initializes the live effect instance and snapshots the mutable state.
 func _init(in_effect: GameplayEffect, in_context: GameplayEffectContext, in_level: float = 1.0) -> void:
 	effect_def = in_effect
 	context = in_context
 	level = in_level
 	application_time = Time.get_ticks_msec() / 1000.0
+	
+	# Snapshot the base resource data into our mutable variables
+	duration = in_effect.duration
+	period = in_effect.period
+	
+	# Pre-calculate and snapshot the base magnitudes so ExecCalcs can mutate them
+	for mod in in_effect.modifiers:
+		if mod and mod.attribute_name != "":
+			mutated_magnitudes[mod.attribute_name] = mod.calculate_magnitude(level)
 #endregion
 
 
