@@ -1,3 +1,6 @@
+@tool
+@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
+extends EditorPlugin
 ## Core editor plugin script for the GodotGAS framework.
 ##
 ## Handles the initialization of the GodotGAS editor dashboard, registers the 
@@ -7,25 +10,17 @@
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
 
-@tool
-@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
-extends EditorPlugin
-
 ## Name of the global cue manager singleton.
 const CUE_MANAGER_NAME = "GameplayCueManager"
-
 ## File path to the global cue manager singleton script.
 const CUE_MANAGER_PATH = "res://addons/GodotGAS/managers/gameplay_cue_manager.gd"
-
 ## Preloaded packed scene for the editor dashboard.
 const DASHBOARD_SCENE = preload("res://addons/GodotGAS/editor/godot_gas_dashboard.tscn")
-
 ## Preloaded script for the tag inspector plugin.
 const GameplayTagInspectorPlugin = preload("res://addons/GodotGAS/gameplay_tag/gameplay_tag_inspector_plugin.gd")
 
 ## Reference to the active dashboard control node in the editor.
 var _dashboard_instance: Control
-
 ## Reference to the active tag inspector plugin instance.
 var _tag_inspector: EditorInspectorPlugin
 
@@ -35,15 +30,15 @@ var _tag_inspector: EditorInspectorPlugin
 func _enter_tree() -> void:
 	_tag_inspector = GameplayTagInspectorPlugin.new()
 	add_inspector_plugin(_tag_inspector)
-	
+
 	# Auto-register the Singleton so the user doesn't have to
 	add_autoload_singleton(CUE_MANAGER_NAME, CUE_MANAGER_PATH)
-	
+
 	_dashboard_instance = DASHBOARD_SCENE.instantiate()
 	_dashboard_instance.visible = false
 	get_editor_interface().get_editor_main_screen().add_child(_dashboard_instance)
 	_make_visible(false)
-	
+
 	print("GodotGAS: Framework Initialized.")
 
 
@@ -51,13 +46,13 @@ func _enter_tree() -> void:
 func _exit_tree() -> void:
 	if _tag_inspector:
 		remove_inspector_plugin(_tag_inspector)
-		
+
 	# Clean up the Singleton when the plugin is disabled
 	remove_autoload_singleton(CUE_MANAGER_NAME)
-	
+
 	if _dashboard_instance:
 		_dashboard_instance.queue_free()
-	
+
 	print("GodotGAS: Framework Disabled.")
 #endregion
 

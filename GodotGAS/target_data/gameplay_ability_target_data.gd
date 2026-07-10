@@ -1,3 +1,6 @@
+@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
+class_name GameplayAbilityTargetData
+extends RefCounted
 ## Encapsulates target information gathered during an ability's execution.
 ##
 ## Stores hit results and unique target nodes, providing a standardized
@@ -7,12 +10,8 @@
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
 
-@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
-class_name GameplayAbilityTargetData extends RefCounted
-
 ## Array of strictly unique target nodes captured by the ability.
 var _target_nodes: Array[Node] = []
-
 ## Array of all raw hit dictionaries, allowing for multi-hit tracking.
 var _hit_results: Array[Dictionary] = []
 
@@ -21,7 +20,7 @@ var _hit_results: Array[Dictionary] = []
 ## Directly appends a raw Godot physics query dictionary (from raycasts or intersect_shape).
 func append_physics_hit(hit_dict: Dictionary) -> void:
 	_hit_results.append(hit_dict)
-	
+
 	var collider: Node = hit_dict.get("collider")
 	if collider and not _target_nodes.has(collider):
 		_target_nodes.append(collider)
@@ -32,20 +31,20 @@ func append_physics_hit(hit_dict: Dictionary) -> void:
 func append_node(node: Node, hit_position: Variant = null) -> void:
 	if not node:
 		return
-		
+
 	if not _target_nodes.has(node):
 		_target_nodes.append(node)
-		
+
 	var pos_to_use: Variant = hit_position
 	if pos_to_use == null and "global_position" in node:
 		pos_to_use = node.global_position
 	elif pos_to_use == null:
 		pos_to_use = Vector3.ZERO # Fallback for non-spatial/canvas nodes
-		
+
 	var mock_hit: Dictionary = {
 		"collider": node,
 		"position": pos_to_use,
-		"normal": Vector3.ZERO
+		"normal": Vector3.ZERO,
 	}
 	_hit_results.append(mock_hit)
 
@@ -75,7 +74,7 @@ func get_hits_for_node(node: Node) -> Array[Dictionary]:
 	for hit in _hit_results:
 		if hit.get("collider") == node:
 			specific_hits.append(hit)
-			
+
 	return specific_hits
 
 

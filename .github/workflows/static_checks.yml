@@ -1,0 +1,75 @@
+name: "Static Checks"
+
+on:
+  workflow_call:
+    outputs:
+      changed-files:
+        description: "A list of changed files."
+        value: "${{ jobs.static-checks.outputs.changed-files }}"
+      changed-sources:
+        description: "Determines if any source files were changed."
+        value: "${{ jobs.static-checks.outputs.changed-sources }}"
+  workflow_dispatch:
+
+env:
+  GDSCRIPT_FORMATTER_VERSION: 0.20.1
+
+jobs:
+  static-checks:
+    name: "GDScript linting and formatting."
+    runs-on: "ubuntu-26.04"
+    timeout-minutes: 10
+    outputs:
+      changed-files: '"${{ steps.changed-files-yaml.outputs.gdscript_all_changed_files }}"'
+      changed-sources: "${{ steps.changed-files-yaml.outputs.sources_any_changed }}"
+    steps:
+      - name: "Checkout GodotGAS"
+        uses: "actions/checkout@v7"
+        with:
+          fetch-depth: 0
+          filter: "tree:0"
+          path: "./GodotGAS"
+
+      - name: "Download and install GDScript-formatter"
+        run: |
+          V="${{ env.GDSCRIPT_FORMATTER_VERSION }}"
+          D="gdscript-formatter-$V-linux-x86_64"
+          F="$D.zip"
+          wget "https://github.com/GDQuest/GDScript-formatter/releases/download/$V/$F"
+          unzip -d "$D" "$F"
+          cd "$D"
+          mv "$D" "gdscript-formatter"
+          echo "$(pwd)" >> "$GITHUB_PATH"
+
+      - name: "Get changed files"
+        id: "changed-files-yaml"
+        uses: "tj-actions/changed-files@v47"
+        with:
+          path: "./GodotGAS"
+          safe_output: false # Output passed to environment variable to avoid command injection.
+          separator: '" "' # To account for paths with spaces, ensure our items are split by quotes internally.
+          skip_initial_fetch: true
+          files_yaml_from_source_file: ".github/changed_files.yml"
+
+      - name: "Run GDScript-formatter"
+        if: ${{ steps.changed-files-yaml.outputs.gdscript_any_changed == 'true' }}
+        env:
+          GDSCRIPT_ALL_CHANGED_FILES: '"${{ steps.changed-files-yaml.outputs.gdscript_all_changed_files }}"'
+        run: |
+          cd GodotGAS
+
+          FORMAT_SUCCESS_START="\e[0;32;4m"  # Green (32) and underlined (4).
+          FORMAT_ERROR_START="\e[0;31;1;4m"  # Red (31), bold (1), and underlined (4).
+          FORMAT_CLEAR="\033[0m"
+          if gdscript_formatter_error="$(gdscript-formatter --reorder-code --check ${{ env.GDSCRIPT_ALL_CHANGED_FILES }} 2>&1 1>/dev/null)"; then
+            # No formatting needed.
+            echo -e "$FORMAT_SUCCESS_START=> No file changed after running \`gdscript-formatter\`.$FORMAT_CLEAR"
+          else
+            # Formatting needed.
+            echo -e "$FORMAT_ERROR_START=> Running \`gdscript-formatter\` changed some files.$FORMAT_CLEAR"
+            echo "$gdscript_formatter_error"
+
+            gdscript-formatter --reorder-code ${{ env.GDSCRIPT_ALL_CHANGED_FILES }} 1>/dev/null 2>/dev/null
+            git diff --color=always
+            exit 1
+          fi

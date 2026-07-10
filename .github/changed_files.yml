@@ -1,0 +1,8 @@
+everything:
+  - "**"
+
+sources:
+  - "**.gd"
+
+gdscript:
+  - "**.gd"

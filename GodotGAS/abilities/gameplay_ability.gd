@@ -1,3 +1,7 @@
+@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
+@abstract
+class_name GameplayAbility
+extends Node
 ## Base class for all gameplay abilities in the GodotGAS framework.
 ##
 ## Defines the core execution logic, input routing, and effect application 
@@ -6,10 +10,6 @@
 ## @meta_addon: GodotGAS 1.0
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
-
-@abstract
-@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
-class_name GameplayAbility extends Node
 
 ## Fired when the ability finishes.
 ## UI or Animation systems can listen to this to know if the cast succeeded or got interrupted.
@@ -26,7 +26,6 @@ signal ability_ended(was_cancelled: bool)
 @export var activation_blocked_tags: Array[StringName] = []
 ## Tags that, if not present on the ASC, will prevent this ability from activating.
 @export var activation_required_tags: Array[StringName] = []
-
 @export_category("Ability Mechanics")
 ## The gameplay effect applied to the owner to deduct resources upon committing.
 @export var cost_effect: GameplayEffect
@@ -36,11 +35,9 @@ signal ability_ended(was_cancelled: bool)
 @export var shared_cooldown_effects: Array[GameplayEffect] = []
 ## Explicitly list any shared cooldowns (like GCDs) this ability should respect.
 @export var shared_cooldown_tags: Array[StringName] = []
-
 @export_category("Ability Triggers")
 ## If set, the ASC will automatically try to activate this ability when it receives this exact event tag.
 @export var trigger_event_tag: StringName = ""
-
 @export_category("Input Routing")
 ## The integer ID this ability is currently bound to. -1 means unbound.
 ## Usually handled automatically by UI Action Bars calling ASC.bind_ability_to_input().
@@ -49,10 +46,8 @@ signal ability_ended(was_cancelled: bool)
 ## Temporarily holds the payload if this ability was activated via an event.
 ## This can be a GameplayEffectSpec, a Dictionary, or a Godot Node!
 var current_event_payload: Variant
-
 ## A reference to the AbilitySystemComponent that owns this ability.
 var owner_asc: AbilitySystemComponent
-
 ## Tracks whether this ability is currently executing.
 var is_active: bool = false
 
@@ -72,21 +67,21 @@ func _ready() -> void:
 func try_activate(event_payload: GameplayEffectContext = null) -> bool:
 	if is_active or not owner_asc:
 		return false
-	
+
 	# Gatekeeper check
 	if not owner_asc.can_activate_ability(self, true):
 		return false
-		
+
 	is_active = true
 	current_event_payload = event_payload # Store the payload for the logic to use
-	
+
 	# Logic execution
 	var success = await _activate_ability()
-	
+
 	# Guaranteed Cleanup
 	if is_active:
 		end_ability(not success)
-		
+
 	current_event_payload = null # Clear it out to prevent memory leaks
 	return success
 
@@ -96,22 +91,13 @@ func try_activate(event_payload: GameplayEffectContext = null) -> bool:
 func commit_ability() -> void:
 	if cost_effect:
 		owner_asc.apply_gameplay_effect(cost_effect, owner_asc, ability_level)
-	
+
 	if cooldown_effect:
 		owner_asc.apply_gameplay_effect(cooldown_effect, owner_asc, ability_level)
-	
+
 	for shared_effect in shared_cooldown_effects:
 		if shared_effect:
 			owner_asc.apply_gameplay_effect(shared_effect, owner_asc, ability_level)
-
-
-## Virtual internal method. Override this in your specific ability scripts.
-func _activate_ability() -> bool:
-	# Example flow:
-	# commit_ability()
-	# await play_animation()
-	# apply_effect_to_targets(...)
-	return true 
 
 
 ## Forcefully interrupts the ability mid-cast.
@@ -126,7 +112,7 @@ func end_ability(was_cancelled: bool = false) -> void:
 	is_active = false
 	# We intentionally DO NOT remove the ability from the ASC here, 
 	# otherwise it gets permanently un-granted.
-	
+
 	ability_ended.emit(was_cancelled)
 #endregion
 
@@ -143,15 +129,15 @@ func execute_cue(tag: StringName) -> void:
 func apply_effect_to_targets(effect_res: GameplayEffect, target_data: GameplayAbilityTargetData) -> void:
 	if not effect_res or not target_data:
 		return
-		
+
 	# The instigator and the causer both default to the persistent parent entity (e.g., the Player).
 	# Do NOT pass `self` (the transient ability) as the causer.
 	var persistent_avatar = owner_asc.get_parent()
 	var context = GameplayEffectContext.new(persistent_avatar, persistent_avatar)
-	
+
 	context.target_data = target_data
 	var spec = GameplayEffectSpec.new(effect_res, context, ability_level)
-	
+
 	var targets = target_data.get_target_nodes()
 	for target in targets:
 		var target_asc = _find_asc_on_node(target)
@@ -159,37 +145,46 @@ func apply_effect_to_targets(effect_res: GameplayEffect, target_data: GameplayAb
 			owner_asc.apply_effect_spec_to_target(spec, target_asc)
 
 
-## Internal helper to search for an ASC on a given node or its immediate children.
-func _find_asc_on_node(node: Node) -> AbilitySystemComponent:
-	if node is AbilitySystemComponent: 
-		return node
-		
-	for child in node.get_children():
-		if child is AbilitySystemComponent: 
-			return child
-			
-	return null
-
-
 ## Returns ALL tags that represent a cooldown for this ability 
 ## (Personal + Shared explicitly assigned by the designer).
 func get_cooldown_tags() -> Array[StringName]:
 	var cooldown_tags: Array[StringName] = []
-	
+
 	# 1. Pull granted tags directly from the assigned Cooldown Resource
 	if cooldown_effect != null:
 		cooldown_tags.append_array(cooldown_effect.granted_tags)
-	
+
 	# 2. Automatically pull tags from the applied shared effects (like the GCD)
 	for effect in shared_cooldown_effects:
 		if effect != null:
 			cooldown_tags.append_array(effect.granted_tags)
-	
+
 	# 3. Pull explicit shared cooldown tags
 	cooldown_tags.append_array(shared_cooldown_tags)
-	
+
 	return cooldown_tags
 #endregion
+
+
+## Virtual internal method. Override this in your specific ability scripts.
+func _activate_ability() -> bool:
+	# Example flow:
+	# commit_ability()
+	# await play_animation()
+	# apply_effect_to_targets(...)
+	return true
+
+
+## Internal helper to search for an ASC on a given node or its immediate children.
+func _find_asc_on_node(node: Node) -> AbilitySystemComponent:
+	if node is AbilitySystemComponent:
+		return node
+
+	for child in node.get_children():
+		if child is AbilitySystemComponent:
+			return child
+
+	return null
 
 
 #region Input Routing
@@ -199,7 +194,7 @@ func _input_pressed(asc: AbilitySystemComponent) -> void:
 		# If already casting/channeling, route to the active override
 		_active_input_pressed(asc)
 		return
-		
+
 	# Kick off the robust activation pipeline (try_activate handles gatekeeping, state, and cleanup)
 	try_activate()
 

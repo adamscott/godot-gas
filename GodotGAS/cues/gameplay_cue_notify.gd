@@ -1,3 +1,6 @@
+@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
+class_name GameplayCueNotify
+extends Node
 ## Base class for all visual and audio effects triggered by the ASC.
 ##
 ## Attach this script to the root of a scene containing your particles or 
@@ -6,9 +9,6 @@
 ## @meta_addon: GodotGAS 1.0
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
-
-@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
-class_name GameplayCueNotify extends Node
 
 ## Emitted when the visual/audio effect is 100% complete so the manager can pool it.
 signal cue_finished(cue_node: GameplayCueNotify, tag: StringName)
@@ -27,10 +27,10 @@ var gameplay_cue_tag: StringName
 
 #region Execution Lifecycle
 ## Called by the Manager when pulled from the pool and added to the target.
-func execute_cue(target: Node, payload: Dictionary = {}) -> void:
+func execute_cue(target: Node, payload: Dictionary = { }) -> void:
 	# 1. Trigger the visual/audio logic
 	play_cue()
-	
+
 	# 2. Setup the automatic garbage collection (Pooling)
 	if auto_destroy:
 		# We use a safe Godot 4 timer connection to finish the cue instead of queue_free

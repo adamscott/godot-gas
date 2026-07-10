@@ -1,3 +1,6 @@
+@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
+class_name GameplayEffectModifier
+extends Resource
 ## A mathematical rule detailing how a Gameplay Effect alters an Attribute.
 ##
 ## Supports both flat values and level-based curve scaling.
@@ -6,23 +9,18 @@
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
 
-@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
-class_name GameplayEffectModifier extends Resource
-
 ## Defines the mathematical operation applied to the attribute.
 enum Operation {
-	ADD,      # Adds the magnitude (use negative values for damage/subtraction)
+	ADD, # Adds the magnitude (use negative values for damage/subtraction)
 	MULTIPLY, # Multiplies the current value (e.g., 1.5 for a 50% increase)
-	DIVIDE,   # Divides the current value
-	OVERRIDE  # Completely replaces the current value with the magnitude
+	DIVIDE, # Divides the current value
+	OVERRIDE, # Completely replaces the current value with the magnitude
 }
 
 ## The exact variable name of the attribute in the AttributeSet (e.g., "health" or "mana").
 @export var attribute_name: String = ""
-
 ## How the math should be applied.
 @export var operation: Operation = Operation.ADD
-
 @export_category("Magnitude Calculation")
 ## A flat number used if no curve is provided. 
 ## If a curve IS provided, this acts as a Multiplier to the curve's output.
@@ -41,7 +39,7 @@ func calculate_magnitude(level: float = 1.0) -> float:
 		# We sample the curve, then multiply it by the base magnitude.
 		var curve_value = scaling_curve.sample(level)
 		return curve_value * magnitude
-		
+
 	# If no curve, just return the flat static number
 	return magnitude
 #endregion

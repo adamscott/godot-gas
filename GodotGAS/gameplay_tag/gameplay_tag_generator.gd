@@ -1,3 +1,7 @@
+@tool
+@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
+class_name GameplayTagGenerator
+extends RefCounted
 ## A static utility for generating a GDScript file containing gameplay tag constants.
 ##
 ## Takes an array of registered StringName tags and outputs a static class 
@@ -6,10 +10,6 @@
 ## @meta_addon: GodotGAS 1.0
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
-
-@tool
-@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
-class_name GameplayTagGenerator extends RefCounted
 
 ## The target file path where the generated tag constants script will be saved.
 const GENERATED_FILE_PATH = "res://addons/GodotGAS/data/gameplay_tags.gd"
@@ -38,13 +38,13 @@ static func generate_tags_file(tags: Array[StringName]) -> void:
 
 	for tag in tags:
 		var tag_string = String(tag)
-		
+
 		# Convert hierarchy dots into underscores for valid variable names
 		var constant_name = tag_string.replace(".", "_")
-		
+
 		# Ensure the generated name is safe from special characters or numbers at the start
 		constant_name = _sanitize_identifier(constant_name)
-		
+
 		# Write the constant line to the file
 		file.store_line("const %s: StringName = &\"%s\"" % [constant_name, tag_string])
 
@@ -60,10 +60,10 @@ static func _sanitize_identifier(id: String) -> String:
 	var regex = RegEx.new()
 	regex.compile("[^a-zA-Z0-9_]")
 	var sanitized = regex.sub(id, "_", true)
-	
+
 	# GDScript identifiers can't start with a number
 	if sanitized.length() > 0 and sanitized[0].is_valid_int():
 		sanitized = "_" + sanitized
-		
+
 	return sanitized
 #endregion

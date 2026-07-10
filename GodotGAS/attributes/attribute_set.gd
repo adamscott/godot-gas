@@ -1,3 +1,8 @@
+@tool
+@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
+@abstract
+class_name AttributeSet
+extends Resource
 ## The foundational class for all attribute modules.
 ##
 ## Do not instantiate directly; inherit to define specific stats.
@@ -5,10 +10,6 @@
 ## @meta_addon: GodotGAS 1.0
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
-
-@tool @abstract
-@icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
-class_name AttributeSet extends Resource
 
 
 #region Core Virtuals
