@@ -15,7 +15,7 @@ class_name GameplayAbility extends Node
 ## UI or Animation systems can listen to this to know if the cast succeeded or got interrupted.
 signal ability_ended(was_cancelled: bool)
 
-@export_category("Ability Rules")
+@export_group("Ability Rules")
 ## The simple name to be used for logging or UI
 @export var ability_name: String = ""
 ## The tag that uniquely identifies this ability.
@@ -27,7 +27,7 @@ signal ability_ended(was_cancelled: bool)
 ## Tags that, if not present on the ASC, will prevent this ability from activating.
 @export_custom(PROPERTY_HINT_NONE, "gas::tag") var activation_required_tags: Array[StringName] = []
 
-@export_category("Ability Mechanics")
+@export_group("Ability Mechanics")
 ## The gameplay effect applied to the owner to deduct resources upon committing.
 @export var cost_effect: GameplayEffect
 ## The gameplay effect applied to the owner to trigger a cooldown upon committing.
@@ -37,11 +37,11 @@ signal ability_ended(was_cancelled: bool)
 ## Explicitly list any shared cooldowns (like GCDs) this ability should respect.
 @export_custom(PROPERTY_HINT_NONE, "gas::tag") var shared_cooldown_tags: Array[StringName] = []
 
-@export_category("Ability Triggers")
+@export_group("Ability Triggers")
 ## If set, the ASC will automatically try to activate this ability when it receives this exact event tag.
 @export_custom(PROPERTY_HINT_NONE, "gas::tag,strict_only") var trigger_event_tag: StringName = ""
 
-@export_category("Input Routing")
+@export_group("Input Routing")
 ## The integer ID this ability is currently bound to. -1 means unbound.
 ## Usually handled automatically by UI Action Bars calling ASC.bind_ability_to_input().
 @export var input_id: int = -1

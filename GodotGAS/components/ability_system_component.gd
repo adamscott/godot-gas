@@ -40,6 +40,12 @@ signal active_effect_removed(active_effect: ActiveGameplayEffect)
 ## The payload dictionary contains context (e.g., {"tags": [array of blocking tags]}).
 signal ability_activation_failed(ability: GameplayAbility, reason: ActivationError, payload: Dictionary)
 
+## Fired when an ability grant was done.
+signal ability_grant_added(ability: GameplayAbility)
+
+## Fired when an ability grant was removed.
+signal ability_grant_removed(ability: GameplayAbility)
+
 ## Fired when THIS ASC receives an effect from someone else. 
 ## UI listens to this to spawn Damage Numbers, "Miss!", or "Blocked!" text.
 signal effect_received(source_asc: AbilitySystemComponent, spec: GameplayEffectSpec)
@@ -245,13 +251,17 @@ func can_activate_ability(ability: GameplayAbility, emit_failure: bool = false) 
 
 ## Tracks an active ability (e.g., for canceling channeled spells).
 func _add_active_ability(ability: GameplayAbility) -> void:
-	if not _active_abilities.has(ability):
-		_active_abilities.append(ability)
+	if _active_abilities.has(ability):
+		return
+
+	_active_abilities.append(ability)
+	ability_grant_added.emit(ability)
 
 
 ## Cleans up an ability reference.
 func _remove_active_ability(ability: GameplayAbility) -> void:
 	_active_abilities.erase(ability)
+	ability_grant_removed.emit(ability)
 
 
 ## Checks if the entity has enough resources to pay for a GameplayEffect cost.

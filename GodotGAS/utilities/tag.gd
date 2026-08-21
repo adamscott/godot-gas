@@ -13,8 +13,7 @@ static func has_tag(tags: Array[StringName], tag_query: StringName, exact: = fal
 
 	var tag_query_str = String(tag_query)
 	for tag in tags:
-		var tag_str = String(tag)
-		if tag_str.begins_with(tag_query_str + "."):
+		if matches(tag, tag_query_str):
 			return true
 
 	return false
@@ -68,6 +67,20 @@ static func to_lax(tag_query: StringName) -> StringName:
 	)
 
 
+## Returns if the two tags are identical (can compare strict and lax tags.)
 static func is_equal(a: StringName, b: StringName) -> bool:
-    return to_lax(a) == to_lax(b)
+	return to_lax(a) == to_lax(b)
 
+
+## Returns if `a` is parent tag of `b`.
+## Will also return `true` if `a` is equal to `b`.
+static func matches(a: StringName, b: StringName) -> bool:
+	if is_equal(a, b):
+		return true
+
+	var lax_a: = to_lax(a)
+	var lax_b: = to_lax(b)
+
+	if to_lax(lax_a).ends_with("."):
+		return lax_b.begins_with(lax_a)
+	return lax_b.begins_with(lax_a + ".")
