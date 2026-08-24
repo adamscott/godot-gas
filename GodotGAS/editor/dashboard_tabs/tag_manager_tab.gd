@@ -12,7 +12,7 @@
 extends Control
 
 ## Addon project settings.
-const GodotGasProjectSettings: = preload("res://addons/GodotGAS/utilities/project_settings.gd")
+const GodotGasProjectSettings: = preload("uid://c7w4dgy6upgcd")
 
 ## Icon used to represent gameplay tags in the tree view.
 var _tag_icon: Texture2D

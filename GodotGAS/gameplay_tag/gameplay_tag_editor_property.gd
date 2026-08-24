@@ -17,7 +17,7 @@ enum TreeItemButtonId {
 }
 
 ## Addon project settings.
-const GodotGasProjectSettings: = preload("res://addons/GodotGAS/utilities/project_settings.gd")
+const GodotGasProjectSettings: = preload("uid://c7w4dgy6upgcd")
 
 ## Property type.
 var property_type: = TYPE_STRING

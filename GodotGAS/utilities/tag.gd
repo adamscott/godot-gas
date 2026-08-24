@@ -1,3 +1,9 @@
+## Tag-related utility functions.
+##
+## @meta_addon: GodotGAS 1.0.5
+## @meta_author: YulRun (https://YulRun.Dev)
+## @meta_license: MIT
+
 extends Object
 class_name GameplayTagUtilities
 

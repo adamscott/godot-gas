@@ -12,7 +12,7 @@
 class_name GameplayTagGenerator extends RefCounted
 
 ## Addon project settings.
-const GodotGasProjectSettings: = preload("res://addons/GodotGAS/utilities/project_settings.gd")
+const GodotGasProjectSettings: = preload("uid://c7w4dgy6upgcd")
 
 
 #region Code Generation

@@ -12,6 +12,8 @@ enum TextEditorBehaviorIndentType {
 }
 
 const PROJECT_SETTINGS_NAME: = "godot_gas"
+const PROJECT_SETTINGS_NAME_CONFIG: = PROJECT_SETTINGS_NAME + "/config"
+const PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR: = PROJECT_SETTINGS_NAME_CONFIG + "/project_author"
 const PROJECT_SETTINGS_NAME_RESOURCES: = PROJECT_SETTINGS_NAME + "/resources"
 const PROJECT_SETTINGS_NAME_RESOURCES_ATTRIBUTES: = PROJECT_SETTINGS_NAME_RESOURCES + "/attributes"
 const PROJECT_SETTINGS_NAME_RESOURCES_ATTRIBUTES_DRAFT_CONFIG_FILE: = PROJECT_SETTINGS_NAME_RESOURCES_ATTRIBUTES + "/draft_configuration_file"
@@ -28,6 +30,7 @@ const PROJECT_SETTINGS_DEFAULT_PATH_RESOURCES_ATTRIBUTES_OUTPUT_DIR: = PROJECT_S
 const PROJECT_SETTINGS_DEFAULT_PATH_RESOURCES_CUES_REGISTRY: = PROJECT_SETTINGS_DEFAULT_PATH + "/cue_registry.tres"
 const PROJECT_SETTINGS_DEFAULT_PATH_RESOURCES_TAGS_REGISTRY: = PROJECT_SETTINGS_DEFAULT_PATH + "/tag_registry.tres"
 const PROJECT_SETTINGS_DEFAULT_PATH_RESOURCES_TAGS_GENERATED_SCRIPT: = PROJECT_SETTINGS_DEFAULT_PATH + "/gameplay_tags.gd"
+const PROJECT_SETTINGS_DEFAULT_CONFIG_PROJECT_AUTHOR: = "Project Author"
 
 
 static func init_project_settings() -> void:
@@ -36,6 +39,7 @@ static func init_project_settings() -> void:
 	_init_project_settings_generated_tag_script_path()
 	_init_project_settings_registry_cue()
 	_init_project_settings_registry_tag()
+	_init_project_settings_config_project_author()
 
 
 static func get_attributes_draft_config_path() -> String:
@@ -66,6 +70,12 @@ static func get_registry_tag_path() -> String:
 	if not ProjectSettings.has_setting(PROJECT_SETTINGS_NAME_RESOURCES_TAGS_REGISTRY):
 		ProjectSettings.set_setting(PROJECT_SETTINGS_NAME_RESOURCES_TAGS_REGISTRY, PROJECT_SETTINGS_DEFAULT_PATH_RESOURCES_TAGS_REGISTRY)
 	return ProjectSettings.get_setting(PROJECT_SETTINGS_NAME_RESOURCES_TAGS_REGISTRY)
+
+
+static func get_config_project_author() -> String:
+	if not ProjectSettings.has_setting(PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR):
+		ProjectSettings.set_setting(PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR, PROJECT_SETTINGS_DEFAULT_CONFIG_PROJECT_AUTHOR)
+	return ProjectSettings.get_setting(PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR)
 
 
 static func _init_project_settings_attributes_output_dir() -> void:
@@ -148,6 +158,17 @@ static func _init_project_settings_registry_tag() -> void:
 		ResourceSaver.save(default_registry, registry_path)
 
 
+static func _init_project_settings_config_project_author() -> void:
+	if not ProjectSettings.has_setting(PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR):
+		ProjectSettings.set_setting(PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR, PROJECT_SETTINGS_DEFAULT_CONFIG_PROJECT_AUTHOR)
+	ProjectSettings.set_initial_value(PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR, PROJECT_SETTINGS_DEFAULT_CONFIG_PROJECT_AUTHOR)
+	ProjectSettings.add_property_info({
+		"name": PROJECT_SETTINGS_NAME_CONFIG_PROJECT_AUTHOR,
+		"type": TYPE_STRING,
+		"hint": PROPERTY_HINT_NONE,
+	})
+
+
 ## Dynamically parses an SVG file in memory, replacing pure white/grey with the native Editor color.
 ## Automatically scales the rasterized image to perfectly match the user's Editor UI Scale (e.g., 4K monitors).
 static func get_svg_icon(path: String) -> Texture2D:
@@ -179,7 +200,7 @@ static func get_svg_icon(path: String) -> Texture2D:
 	return load(path)
 
 
-## Return the text editor indent string (a tab or multiple spaces) based on the editor settings.
+## Returns the text editor indent string (a tab or multiple spaces) based on the editor settings.
 static func get_text_editor_indent() -> String:
 	if not Engine.is_editor_hint():
 		return "\t"
@@ -190,3 +211,23 @@ static func get_text_editor_indent() -> String:
 	var use_tabs = indent_type == TextEditorBehaviorIndentType.TAB
 	var spaces_to_insert: = editor_settings.get_setting("text_editor/behavior/indent/size") as int
 	return "\t" if use_tabs else " ".repeat(spaces_to_insert)
+
+
+## Returns if the text editor trims the final line of a file.
+static func get_text_editor_trim_final_newlines_on_save() -> bool:
+	if not Engine.is_editor_hint():
+		return true
+
+	return EditorInterface \
+		.get_editor_settings() \
+		.get_setting("text_editor/behavior/files/trim_final_newlines_on_save")
+
+
+## Returns if the text editor trims empty lines in a file.
+static func get_text_editor_trim_trailing_whitespace_on_save() -> bool:
+	if not Engine.is_editor_hint():
+		return true
+
+	return EditorInterface \
+		.get_editor_settings() \
+		.get_setting("text_editor/behavior/files/trim_trailing_whitespace_on_save")

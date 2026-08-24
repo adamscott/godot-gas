@@ -24,7 +24,7 @@ const DASHBOARD_SCENE = preload("res://addons/GodotGAS/editor/godot_gas_dashboar
 const GameplayTagInspectorPlugin = preload("res://addons/GodotGAS/gameplay_tag/gameplay_tag_inspector_plugin.gd")
 
 ## Preloaded scripts for the plugin project settings.
-const GodotGasProjectSettings = preload("res://addons/GodotGAS/utilities/project_settings.gd")
+const GodotGasProjectSettings = preload("uid://c7w4dgy6upgcd")
 
 ## Reference to the active dashboard control node in the editor.
 var _dashboard_instance: Control

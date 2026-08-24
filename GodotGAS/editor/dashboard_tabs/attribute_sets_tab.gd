@@ -12,7 +12,8 @@
 extends Control
 
 ## Addon project settings.
-const GodotGasProjectSettings: = preload("res://addons/GodotGAS/utilities/project_settings.gd")
+const GodotGasProjectSettings: = preload("uid://c7w4dgy6upgcd")
+const StringBuilder: = preload("uid://d1bffm2o6kir")
 
 ## Icon for Attribute Set categories.
 var _set_icon: Texture2D
@@ -634,7 +635,9 @@ func _on_generate_script_pressed() -> void:
 	if _current_set == "": 
 		return
 	
-	var tab_value: = GodotGasProjectSettings.get_text_editor_indent()
+	var editor_indent: = GodotGasProjectSettings.get_text_editor_indent()
+	var editor_trim_whitespace_on_save: = GodotGasProjectSettings. \
+		get_text_editor_trim_trailing_whitespace_on_save()
 
 	var output_dir: = GodotGasProjectSettings.get_attributes_output_dir_path()
 	var file_name = _current_set.to_snake_case() + "_attribute_set.gd"
@@ -659,15 +662,25 @@ func _on_generate_script_pressed() -> void:
 			return
 
 	# Build GDScript String
-	var script_text = "## An extended class for the attribute module: %s \n" %_current_set
-	script_text += "##\n"
-	script_text += "## @meta_addon: GodotGAS 1.0.5\n"
-	script_text += "## @meta_author: YulRun (https://YulRun.Dev) & 'Your Name Here'\n"
-	script_text += "## @meta_license: MIT (Default)\n\n"
-	script_text += "@tool\nclass_name " + _current_set + "AttributeSet extends AttributeSet\n\n"
+	var script_root: = StringBuilder.new()
+	script_root.appended_indent = GodotGasProjectSettings.get_text_editor_indent()
+
+	script_root \
+		.append_line("## An extended class for the attribute module: %s" % [_current_set]) \
+		.append_line("##") \
+		.append_line("## @meta_addon: GodotGAS 1.0.5") \
+		.append_line("## @meta_author: YulRun (https://YulRun.Dev) & %s" % [
+			GodotGasProjectSettings.get_config_project_author(),
+		]) \
+		.append_line("## @meta_license: MIT (Default)") \
+		.append_empty_line() \
+		.append_line("@tool") \
+		.append_line("class_name %sAttributeSet" % [_current_set]) \
+		.append_line("extends AttributeSet") \
+		.append_empty_line()
 	
 	var keys = _drafts.get_section_keys(_current_set)
-	var valid_attributes = []
+	var valid_attributes: = PackedStringArray()
 	
 	for key in keys:
 		if key == "_initialized": 
@@ -683,22 +696,31 @@ func _on_generate_script_pressed() -> void:
 		else:
 			val = float(raw_val)
 			
-		script_text += "var %s: AttributeData = AttributeData.new(%s)\n" % [key, str(val)]
-	
-	script_text += "\n\n"
+		script_root.append_line("var %s: AttributeData = AttributeData.new(%s)" % [key, str(val)])
+
+	script_root.append_empty_line(2)
 
 	# Init block.
-	script_text += "func _init() -> void:\n"
-	script_text += "%s_name = \"%s\"\n" % [
-		tab_value,
-		_current_set,
-	]
-	script_text += "\n\n"
+	script_root \
+		.append_line("func _init() -> void:") \
+		.append_indent_b() \
+			.append_line("_name = \"%s\"" % [_current_set])
+	script_root \
+		.append_empty_line(2)
+
 	
 	# Boilerplate Pipeline Block (with max_ stat auto-matching)
-	script_text += "## The safety pipeline: Clamps stats before they are officially changed.\n"
-	script_text += "func pre_attribute_change(attribute_name: String, proposed_value: float) -> float:\n"
-	script_text += "%smatch attribute_name:\n" % [tab_value]
+	script_root \
+		.append_line("@warning_ignore(\"unused_parameter\")") \
+		.append_line("## The safety pipeline: Clamps stats before they are officially changed.") \
+		.append_line(
+			"func pre_attribute_change(attribute_name: String, proposed_value: float) -> float:"
+		)
+
+	var script_pre_attribute_change: = \
+		script_root \
+			.append_indent_b() \
+				.append_line("match attribute_name:")
 	
 	var has_match = false
 	for key in valid_attributes:
@@ -709,67 +731,111 @@ func _on_generate_script_pressed() -> void:
 				# Check for a matching min_ attribute, default to 0.0 if missing
 				var min_k = "min_" + key
 				var min_val = min_k + ".current_value" if min_k in valid_attributes else "0.0"
-				
-				script_text += "%s\"%s\":\n" % [tab_value.repeat(2), key]
-				script_text += "%sreturn clamp(proposed_value, %s, %s.current_value)\n" % [
-					tab_value.repeat(3),
-					min_val,
-					max_k,
-				]
+
+				script_pre_attribute_change \
+					.append_indent_b() \
+						.append_line("\"%s\":" % [key]) \
+						.append_indent_b() \
+							.append_line("return clampf(proposed_value, %s, %s.current_value)" % [
+								min_val,
+								max_k,
+							])
 				has_match = true
-	
+
 	if not has_match:
-		script_text += "%s_:\n" % [tab_value.repeat(2)]
-		script_text += "%spass\n" % [tab_value.repeat(3)]
-	
-	script_text += "\n"
-	script_text += "%sreturn proposed_value\n\n\n" % [tab_value]
+		script_pre_attribute_change \
+			.append_indent_b() \
+				.append_line("_:") \
+				.append_indent_b() \
+					.append_line("pass")
+
+	script_pre_attribute_change \
+		.append_empty_line() \
+		.append_line("return proposed_value")
+
+	script_root \
+		.append_empty_line(2)
 	
 	# Post-Attribute Change Pipeline (Handles Moving Goalposts)
-	script_text += "## The reaction pipeline: Handles moving goalposts (e.g. MaxHealth dropping below Health).\n"
-	script_text += "func post_attribute_change(\n"
-	script_text += "%sasc: Node,\n" % [tab_value.repeat(2)]
-	script_text += "%sattribute_name: String,\n" % [tab_value.repeat(2)]
-	script_text += "%sold_value: float,\n" % [tab_value.repeat(2)]
-	script_text += "%snew_value: float,\n" % [tab_value.repeat(2)]
-	script_text += ") -> void:\n"
-	script_text += "%smatch attribute_name:\n" % [tab_value]
+	script_root \
+		.append_line("@warning_ignore(\"unused_parameter\")") \
+		.append_line(
+			"## The reaction pipeline: Handles moving goalposts " \
+			+ "(e.g. MaxHealth dropping below Health)."
+		) \
+		.append_line("func post_attribute_change(") \
+		.append_indent_b(2) \
+			.append_line("asc: Node,") \
+			.append_line("attribute_name: String,") \
+			.append_line("old_value: float,") \
+			.append_line("new_value: float,")
+	script_root \
+		.append_line(") -> void:")
+
+	var script_post_attribute_change: = \
+		script_root \
+			.append_indent_b()
+
+	var match_builder: = StringBuilder.new()
+	match_builder \
+		.append_line("match attribute_name:")
 	
 	var has_post_match = false
 	for key in valid_attributes:
+		var lower_key: = key.to_lower()
 		# We look for base attributes (like 'health') to see if they have min/max pairs
-		if not "max_" in key.to_lower() and not "min_" in key.to_lower():
+		if not "max_" in lower_key and not "min_" in lower_key:
 			var max_k = "max_" + key
 			var min_k = "min_" + key
-			
+
 			if max_k in valid_attributes:
-				script_text += "%s\"%s\":\n" % [tab_value.repeat(2), max_k]
-				script_text += "%sif %s.current_value > new_value:\n" % [tab_value.repeat(3), key]
-				script_text += "%sasc._apply_attribute_change(\"%s\", new_value - %s.current_value)\n" % [
-					tab_value.repeat(4),
-					key,
-					key,
+				var max_k_match: = "\"%s\" when %s" % [
+					max_k,
+					"%s.current_value > new_value" % [key],
 				]
+				match_builder \
+					.append_indent_b() \
+						.append_line("%s:" % [max_k_match]) \
+						.append_indent_b() \
+							.append_line("asc._apply_attribute_change(\"%s\", %s)" % [
+								key,
+								"new_value - %s.current_value" % [key],
+							])
 				has_post_match = true
-				
+
 			if min_k in valid_attributes:
-				script_text += "%s\"%s\":\n" % [tab_value.repeat(2), min_k]
-				script_text += "%sif %s.current_value < new_value:\n" % [tab_value.repeat(3), key]
-				script_text += "%sasc._apply_attribute_change(\"%s\", new_value - %s.current_value)\n" % [
-					tab_value.repeat(4),
-					key,
-					key,
+				var min_k_match: = "\"%s\" when %s" % [
+					min_k,
+					"%s.current_value < new_value" % [key],
 				]
+				match_builder \
+					.append_indent_b() \
+						.append_line("%s:" % [min_k_match]) \
+						.append_indent_b() \
+							.append_line("asc._apply_attribute_change(\"%s\", %s)" % [
+								key,
+								"new_value - %s.current_value" % [key],
+							])
 				has_post_match = true
-				
-	if not has_post_match:
-		script_text += "%s_:\n" % [tab_value.repeat(2)]
-		script_text += "%spass\n" % [tab_value.repeat(3)]
+								
+	if has_post_match:
+		script_post_attribute_change \
+			.append_builder(match_builder)
+	else:
+		script_post_attribute_change \
+			.append_line("pass")
 
 	# Write to Disk
 	var file = FileAccess.open(file_path, FileAccess.WRITE)
 	if file:
-		file.store_string(script_text)
+		file.store_string(
+			script_root.as_string(
+				{
+					"ensure_final_newline": not GodotGasProjectSettings \
+						.get_text_editor_trim_final_newlines_on_save()
+				}
+			)
+		)
 		file.close()
 		EditorInterface.get_resource_filesystem().scan()
 		

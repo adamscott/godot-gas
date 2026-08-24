@@ -11,7 +11,7 @@
 extends Node
 
 ## Addon project settings.
-const GodotGasProjectSettings: = preload("res://addons/GodotGAS/utilities/project_settings.gd")
+const GodotGasProjectSettings: = preload("uid://c7w4dgy6upgcd")
 
 ## Internal dictionary holding the object pool. Format: { "tag": [GameplayCueNotify, ...] }
 var _pool: Dictionary = {}
