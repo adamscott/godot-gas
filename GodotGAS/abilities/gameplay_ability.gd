@@ -11,11 +11,19 @@
 @icon("res://addons/GodotGAS/icons/godot_gas_asc.svg")
 class_name GameplayAbility extends Node
 
+## Defines how this ability handles multiple overlapping activations.
+enum InstancingPolicy {
+	INSTANCED_PER_ACTOR,     ## Only one instance exists. Blocks subsequent casts until finished.
+	INSTANCED_PER_EXECUTION  ## Duplicates a fresh transient copy for every cast. Allows concurrent overlap.
+}
+
 ## Fired when the ability finishes.
 ## UI or Animation systems can listen to this to know if the cast succeeded or got interrupted.
 signal ability_ended(was_cancelled: bool)
 
 @export_category("Ability Rules")
+## How this ability handles being cast multiple times in rapid succession.
+@export var instancing_policy: InstancingPolicy = InstancingPolicy.INSTANCED_PER_ACTOR
 ## The simple name to be used for logging or UI
 @export var ability_name: String = ""
 ## The tag that uniquely identifies this ability.
@@ -68,6 +76,34 @@ func _ready() -> void:
 #region Execution & State
 ## The public entry point. Accepts an optional payload if triggered by an event.
 func try_activate(event_payload: Variant = null) -> bool:
+	# --- INSTANCED PER EXECUTION PATH ---
+	if instancing_policy == InstancingPolicy.INSTANCED_PER_EXECUTION:
+		# 1. Gatekeeper check on the base template first
+		if not owner_asc.can_activate_ability(self, true):
+			return false
+			
+		# 2. Spawn a transient clone for this specific execution
+		var transient_ability: GameplayAbility = self.duplicate()
+		
+		# 3. Force the clone to PER_ACTOR so it executes normally without recursively cloning itself
+		transient_ability.instancing_policy = InstancingPolicy.INSTANCED_PER_ACTOR
+		
+		# 4. Attach and register the clone with the ASC so it can be canceled by tags
+		owner_asc.add_child(transient_ability)
+		transient_ability.owner_asc = owner_asc
+		owner_asc._add_active_ability(transient_ability)
+		
+		# 5. Clean up the clone from memory and ASC tracking the exact moment it finishes
+		transient_ability.ability_ended.connect(func(_was_cancelled):
+			owner_asc._remove_active_ability(transient_ability)
+			transient_ability.queue_free()
+		)
+		
+		# 6. Execute the clone (Awaited to extract the boolean from the coroutine)
+		return await transient_ability.try_activate(event_payload)
+		
+		
+	# --- INSTANCED PER ACTOR PATH (Standard) ---
 	if is_active or not owner_asc:
 		return false
 	
@@ -218,4 +254,60 @@ func _active_input_pressed(asc: AbilitySystemComponent) -> void:
 ## Override this for 'Hold to charge, Release to fire' mechanics.
 func _active_input_released(asc: AbilitySystemComponent) -> void:
 	pass
+#endregion
+
+
+#region Async Ability Tasks
+## Pauses ability execution for a specific duration in seconds without blocking the thread.
+func task_wait_delay(duration: float) -> void:
+	if duration <= 0.0: return
+	
+	# Yield for a single frame before starting the clock. 
+	# This protects the SceneTreeTimer from instantly absorbing massive delta spikes 
+	# that occur when abilities are cast during _ready() or heavy scene loads.
+	await get_tree().process_frame
+	await get_tree().create_timer(duration).timeout
+
+
+## Yields execution until the ASC receives a specific gameplay event tag.
+## Uses a loop to continuously filter incoming signals until the correct tag is intercepted.
+func task_wait_for_event(target_tag: StringName) -> Dictionary:
+	if not owner_asc: return {}
+	
+	while is_active:
+		# Awaiting a signal with multiple parameters returns an Array in Godot 4
+		var args = await owner_asc.gameplay_event_received
+		var received_tag = args[0] if args is Array else args
+		var payload = args[1] if args is Array and args.size() > 1 else {}
+		
+		if received_tag == target_tag:
+			return payload
+			
+	return {}
+
+
+## Yields execution until a specific attribute changes on the owner's ASC.
+func task_wait_for_attribute_change(attribute_name: String) -> void:
+	if not owner_asc: return
+	
+	while is_active:
+		var args = await owner_asc.attribute_changed
+		var changed_attr = args[0] if args is Array else args
+		
+		if changed_attr == attribute_name:
+			return
+
+
+## Plays a specific animation and yields execution until that exact animation finishes.
+func task_play_animation_and_wait(anim_player: AnimationPlayer, anim_name: String) -> void:
+	if not anim_player or not anim_player.has_animation(anim_name):
+		push_warning("GodotGAS: Animation '%s' not found on %s." % [anim_name, anim_player.name])
+		return
+		
+	anim_player.play(anim_name)
+	
+	while is_active:
+		var finished_anim_name = await anim_player.animation_finished
+		if finished_anim_name == anim_name:
+			return
 #endregion
