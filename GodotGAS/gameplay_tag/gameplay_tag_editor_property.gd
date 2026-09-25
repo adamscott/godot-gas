@@ -3,7 +3,7 @@
 ## Displays a button in the inspector that opens a dedicated tag editor 
 ## popup window, allowing users to assign, create, or delete tags.
 ##
-## @meta_addon: GodotGAS Version 1 (See plugin version for exact version)
+## @meta_addon: GodotGAS Version 1+ (See plugin version for exact version)
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
 
@@ -57,7 +57,7 @@ func _init(type: = TYPE_STRING) -> void:
 		or type == TYPE_STRING_NAME,
 		"Unsupported variant type.",
 	)
-	self.property_type = property_type
+	self.property_type = type
 
 	_registry = load(GodotGasProjectSettings.get_registry_tag_path()) as GameplayTagRegistry
 	

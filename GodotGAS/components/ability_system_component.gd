@@ -75,8 +75,7 @@ var _active_effects: Array[ActiveGameplayEffect] = []
 enum ActivationError {
 	ALREADY_ACTIVE,
 	ON_COOLDOWN,
-	BLOCKED_TAG,
-	MISSING_TAG,
+	FAILED_QUERY,
 	INSUFFICIENT_RESOURCES,
 	INTERNAL_ERROR
 }
@@ -212,11 +211,13 @@ func _server_receive_input_pressed(input_id: int) -> void:
 	if is_multiplayer_authority():
 		_ability_local_input_pressed(input_id)
 
+
 ## Server executes inputs sent from the network Client.
 @rpc("any_peer", "call_remote", "reliable")
 func _server_receive_input_released(input_id: int) -> void:
 	if is_multiplayer_authority():
 		_ability_local_input_released(input_id)
+
 
 ## Clients execute cues broadcasted by the Server.
 @rpc("authority", "call_remote", "reliable")
@@ -253,6 +254,26 @@ func grant_ability(ability_node: GameplayAbility) -> void:
 	_add_active_ability(ability_node)
 
 
+## Grants an ability directly from a GDScript resource (Code-First approach).
+## Instantiates the node, attaches it to the ASC, and returns the reference for dynamic configuration.
+func grant_ability_from_script(ability_script: Script) -> GameplayAbility:
+	if not ability_script:
+		push_error("GodotGAS: Cannot grant ability. Provided script is null.")
+		return null
+		
+	var ability_instance = ability_script.new()
+	
+	if not ability_instance is GameplayAbility:
+		push_error("GodotGAS: Script must extend GameplayAbility to be granted.")
+		ability_instance.free()
+		return null
+		
+	# Funnel it through our standard grant logic (which handles tree insertion and tracking)
+	grant_ability(ability_instance)
+	
+	return ability_instance
+
+
 ## Removes an ability from this ASC.
 func remove_ability(ability: GameplayAbility) -> void:
 	_remove_active_ability(ability)
@@ -271,10 +292,10 @@ func can_activate_ability(ability: GameplayAbility, emit_failure: bool = false) 
 			ability_activation_failed.emit(ability, ActivationError.ALREADY_ACTIVE, {})
 		return false
 	
-	# 1. Check Blocked Tags (e.g., Status.Stunned)
-	if has_any_tags(ability.activation_blocked_tags):
+	# 1. Check Activation Query
+	if ability.activation_query and not ability.activation_query.matches(self):
 		if emit_failure: 
-			ability_activation_failed.emit(ability, ActivationError.BLOCKED_TAG, {"tags": ability.activation_blocked_tags})
+			ability_activation_failed.emit(ability, ActivationError.FAILED_QUERY, {"query": ability.activation_query})
 		return false
 	
 	# 2. Check Cooldowns (Personal + Shared)
@@ -285,13 +306,7 @@ func can_activate_ability(ability: GameplayAbility, emit_failure: bool = false) 
 				ability_activation_failed.emit(ability, ActivationError.ON_COOLDOWN, {"tags": cooldown_tags})
 			return false
 	
-	# 3. Check Required Tags (e.g., Stance.Stealth)
-	if not ability.activation_required_tags.is_empty() and not has_all_tags(ability.activation_required_tags):
-		if emit_failure: 
-			ability_activation_failed.emit(ability, ActivationError.MISSING_TAG, {"tags": ability.activation_required_tags})
-		return false
-	
-	# 4. Check Resource Costs, Fully supports ExecCalcs predicting math
+	# 3. Check Resource Costs, Fully supports ExecCalcs predicting math
 	if ability.cost_effect and not can_afford_cost(ability.cost_effect, ability.ability_level):
 		if emit_failure: 
 			ability_activation_failed.emit(ability, ActivationError.INSUFFICIENT_RESOURCES, {"effect": ability.cost_effect})
@@ -343,9 +358,30 @@ func cancel_abilities_with_tags(tags: Array[StringName]) -> void:
 			continue
 			
 		for tag in tags:
-			if ability.ability_tag == tag or tag in ability.activation_blocked_tags:
+			if ability.ability_tag == tag:
 				ability.abort_ability()
 				break 
+				
+			if ability.activation_query:
+				if tag in ability.activation_query.ignore_tags or tag in ability.activation_query.ignore_exact_tags:
+					ability.abort_ability()
+					break 
+
+
+## Attempts to activate all granted abilities that match the given tag.
+## Returns true if at least one ability successfully activated (concurrently).
+func try_activate_abilities_by_tag(tag: StringName, event_payload: Variant = null) -> bool:
+	var activated_any: bool = false
+	
+	for ability in _active_abilities:
+		if ability.ability_tag == tag:
+			# Check the gatekeeper manually so we get an instant true/false
+			if can_activate_ability(ability):
+				# Fire and forget! Do not await, let it run concurrently in the background.
+				ability.try_activate(event_payload)
+				activated_any = true
+				
+	return activated_any
 #endregion
 
 
@@ -469,15 +505,9 @@ func _apply_effect_spec(spec: GameplayEffectSpec) -> ActiveGameplayEffect:
 		
 	var effect = spec.effect_def
 	
-	# 1. Check for Immunities (Ignored Tags)
-	for tag in effect.application_ignore_tags:
-		if has_tag(tag):
-			return null
-	
-	# 2. Check for Conditions (Required Tags)
-	for tag in effect.application_required_tags:
-		if not has_tag(tag):
-			return null
+	# 1 & 2. Check Application Query
+	if effect.application_query and not effect.application_query.matches(self):
+		return null
 	
 	# 3. The Cleanser Pattern (Purge targeted effects BEFORE evaluating new math)
 	for purge_tag in effect.remove_effects_with_tags:
@@ -593,6 +623,10 @@ func remove_active_effect(active_effect: ActiveGameplayEffect, skip_array_erase:
 		var reverse_delta = -active_effect.applied_deltas[attr_name]
 		_apply_attribute_change(attr_name, reverse_delta)
 		
+	# Trigger Removal Cues
+	for cue_tag in active_effect.get_effect_def().removal_cue_tags:
+		execute_cue(cue_tag, {"target": get_parent()})
+		
 	if not skip_array_erase and _active_effects.has(active_effect):
 		active_effect_removed.emit(active_effect)
 		_active_effects.erase(active_effect)
@@ -651,8 +685,14 @@ func _evaluate_spec(spec: GameplayEffectSpec) -> void:
 			continue
 			
 		var attr_name = mod.attribute_name
-		# IMPORTANT: Pull magnitude from the mutated dictionary, NOT the base definition!
-		var magnitude = spec.mutated_magnitudes.get(attr_name, 0.0) 
+		var magnitude = 0.0
+		
+		# Intercept the calculation type!
+		match mod.magnitude_calculation:
+			GameplayEffectModifier.MagnitudeCalculationType.STATIC:
+				magnitude = spec.mutated_magnitudes.get(attr_name, 0.0) 
+			GameplayEffectModifier.MagnitudeCalculationType.SET_BY_CALLER:
+				magnitude = spec.get_set_by_caller_magnitude(mod.set_by_caller_tag)
 		
 		var current_val = 0.0
 		var attr_data = get_attribute(attr_name)

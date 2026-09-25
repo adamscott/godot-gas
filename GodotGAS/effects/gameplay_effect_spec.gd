@@ -38,9 +38,13 @@ var remaining_turns: int = 0
 ## The runtime period of the effect. Mutated by ExecCalcs before application.
 var period: float = 0.0
 
-## Dictionary tracking the runtime magnitude of each modifier.
+## Dictionary tracking the runtime magnitude of each STATIC modifier.
 ## Key: Attribute Name (String), Value: Magnitude (float)
 var mutated_magnitudes: Dictionary = {}
+
+## Dictionary holding dynamic values injected by the Ability at runtime.
+## Key: Tag (StringName), Value: Magnitude (float)
+var set_by_caller_magnitudes: Dictionary = {}
 # ==========================================
 
 
@@ -60,7 +64,8 @@ func _init(in_effect: GameplayEffect, in_context: GameplayEffectContext, in_leve
 	# Pre-calculate and snapshot the base magnitudes so ExecCalcs can mutate them
 	for mod in in_effect.modifiers:
 		if mod and mod.attribute_name != "":
-			mutated_magnitudes[mod.attribute_name] = mod.calculate_magnitude(level)
+			if mod.magnitude_calculation == GameplayEffectModifier.MagnitudeCalculationType.STATIC:
+				mutated_magnitudes[mod.attribute_name] = mod.calculate_magnitude(level)
 #endregion
 
 
@@ -72,6 +77,7 @@ func get_target_nodes() -> Array[Node]:
 		
 	return []
 
+
 ## QoL Helper: Checks if the spec has a tag natively OR dynamically
 func has_tag(tag: StringName) -> bool:
 	# Assuming your base effect has an array of identifier tags like 'asset_tags' or 'granted_tags'
@@ -79,8 +85,21 @@ func has_tag(tag: StringName) -> bool:
 		return true
 	return dynamic_tags.has(tag)
 
+
 ## QoL Helper: Injects a tag into our Dynamic Tag Array (Useful for applying 'Critical' 'Dodge' etc. During Exec. Calculations
 func inject_tag(tag: StringName) -> void:
 	if not dynamic_tags.has(tag):
 		dynamic_tags.append(tag)
+#endregion
+
+
+#region SetByCaller Routing
+## Injects a dynamic mathematical value into the Spec, keyed by a gameplay tag.
+func set_set_by_caller_magnitude(tag: StringName, magnitude: float) -> void:
+	set_by_caller_magnitudes[tag] = magnitude
+
+
+## Retrieves an injected dynamic value by its tag.
+func get_set_by_caller_magnitude(tag: StringName, default_value: float = 0.0) -> float:
+	return set_by_caller_magnitudes.get(tag, default_value)
 #endregion

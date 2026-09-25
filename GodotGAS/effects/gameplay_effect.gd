@@ -45,18 +45,16 @@ enum StackingPolicy {
 @export var tick_on_turn_start: bool = true
 
 @export_category("Application Requirements")
-## The target MUST have all of these tags for this effect to apply.
-## (e.g., Must have 'Status.Burning' for an 'Explode' effect to work).
-@export var application_required_tags: Array[StringName] = []
-## The target must NOT have any of these tags. If they do, the effect is blocked.
-## (e.g., Target has 'Status.Immune.Poison', so block poison effects).
-@export var application_ignore_tags: Array[StringName] = []
+## The query evaluated against the target's ASC to determine if this effect can be applied.
+@export var application_query: GameplayTagQuery
 
 @export_category("Cue Management")
 ## Cues that play exactly once when the effect is first applied to a target.
-@export var application_cue_tags: Array[StringName] = []
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var application_cue_tags: Array[StringName] = []
 ## Cues that play every time a periodic tick occurs.
-@export var periodic_cue_tags: Array[StringName] = []
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var periodic_cue_tags: Array[StringName] = []
+## Cues that play exactly once when the effect expires or is forcefully removed.
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var removal_cue_tags: Array[StringName] = []
 
 @export_category("Attribute Modifiers")
 ## Custom mathematical scripts that run complex logic (e.g., Damage = Attack - Defense).
@@ -67,13 +65,13 @@ enum StackingPolicy {
 @export_category("State Management")
 ## If this effect is successfully applied, it will immediately purge any active effects on the target that grant these tags.
 ## (e.g., A 'Cure' potion would list 'Status.Poison' here).
-@export var remove_effects_with_tags: Array[StringName] = []
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var remove_effects_with_tags: Array[StringName] = []
 ## Tags granted to the target ASC for as long as this effect is active.
 ## Not used for events, but state ie: 'Status.Stunned'
 ## NOTE: Instant effects do not grant tags.
-@export var granted_tags: Array[StringName] = []
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var granted_tags: Array[StringName] = []
 
 @export_category("Event Management")
 ## Tags broadcasted directly to the target's ASC as Gameplay Events upon application (or periodic tick).
 ## Ideal for waking up reactive passive abilities (e.g., 'Event.Damage.Taken').
-@export var event_tags: Array[StringName] = []
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var event_tags: Array[StringName] = []
