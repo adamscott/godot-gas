@@ -25,6 +25,9 @@ var time_remaining: float = 0.0
 ## The internal clock tracking the time until the next periodic tick.
 var time_until_next_tick: float = 0.0
 
+## Indicates if the effect is currently suspended by an ongoing tag query.
+var is_suppressed: bool = false
+
 
 #region Initialization
 func _init(in_spec: GameplayEffectSpec) -> void:

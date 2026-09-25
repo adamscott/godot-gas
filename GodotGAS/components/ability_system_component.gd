@@ -71,6 +71,10 @@ var _active_tags: Dictionary = {}
 ## Array tracking all active gameplay effects currently applied to this component.
 var _active_effects: Array[ActiveGameplayEffect] = []
 
+## Recursion-guard flags to safely cascade suppression evaluations when tags change.
+var _is_evaluating_suppression: bool = false
+var _suppression_queued: bool = false
+
 ## Defines the exact reason an ability failed to activate.
 enum ActivationError {
 	ALREADY_ACTIVE,
@@ -132,17 +136,19 @@ func _process(delta: float) -> void:
 			active_effect.time_until_next_tick -= delta
 			if active_effect.time_until_next_tick <= 0.0:
 				
-				# 1. Trigger Periodic Cues
-				for cue_tag in active_effect.spec.effect_def.periodic_cue_tags:
-					execute_cue(cue_tag, {"target": get_parent()})
-				
-				# 2. Broadcast Periodic Events (Wakes up passives!)
-				_trigger_effect_events(active_effect.spec)
+				# Skip tick outputs if suppressed, but continue tracking tick interval
+				if not active_effect.is_suppressed:
+					# 1. Trigger Periodic Cues
+					for cue_tag in active_effect.spec.effect_def.periodic_cue_tags:
+						execute_cue(cue_tag, {"target": get_parent()})
 					
-				# 3. Re-Evaluate and Apply the math natively
-				# Doing this per tick allows DoTs to dynamically update if attacker stats change!
-				_evaluate_spec(active_effect.spec) 
-				_commit_spec_math(active_effect.spec)
+					# 2. Broadcast Periodic Events (Wakes up passives!)
+					_trigger_effect_events(active_effect.spec)
+						
+					# 3. Re-Evaluate and Apply the math natively
+					# Doing this per tick allows DoTs to dynamically update if attacker stats change!
+					_evaluate_spec(active_effect.spec) 
+					_commit_spec_math(active_effect.spec)
 				
 				# Reset the clock for the next tick
 				active_effect.time_until_next_tick += active_effect.spec.period
@@ -165,16 +171,17 @@ func advance_turn() -> void:
 			
 			# 1. Handle Turn-Based Periodic Ticks (DoTs / HoTs)
 			if spec.period > 0.0 and spec.effect_def.tick_on_turn_start:
-				# 1a. Trigger Cues
-				for cue_tag in spec.effect_def.periodic_cue_tags:
-					execute_cue(cue_tag, {"target": get_parent()})
-				
-				# 1b. Broadcast Events
-				_trigger_effect_events(spec)
-				
-				# 1c. Re-evaluate and apply math
-				_evaluate_spec(spec)
-				_commit_spec_math(spec)
+				if not active_effect.is_suppressed:
+					# 1a. Trigger Cues
+					for cue_tag in spec.effect_def.periodic_cue_tags:
+						execute_cue(cue_tag, {"target": get_parent()})
+					
+					# 1b. Broadcast Events
+					_trigger_effect_events(spec)
+					
+					# 1c. Re-evaluate and apply math
+					_evaluate_spec(spec)
+					_commit_spec_math(spec)
 			
 			# 2. Decrement the turn counter
 			spec.remaining_turns -= 1
@@ -527,23 +534,18 @@ func _apply_effect_spec(spec: GameplayEffectSpec) -> ActiveGameplayEffect:
 					elif effect.policy == GameplayEffect.DurationPolicy.TURN_BASED:
 						active_effect.spec.remaining_turns = spec.remaining_turns
 					
-					# Re-trigger application cues so the player knows it refreshed!
-					for cue_tag in effect.application_cue_tags:
-						execute_cue(cue_tag, {"target": get_parent()})
-					
-					# Determine the source for the UI signals
-					var source_asc = null
-					if spec.context and spec.context.instigator:
-						source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+					# REFRESH EDGE CASE: Do not fire application cues or events if suppressed!
+					if not active_effect.is_suppressed:
+						for cue_tag in effect.application_cue_tags:
+							execute_cue(cue_tag, {"target": get_parent()})
 						
-					# Notify the Defender's UI that it was "received" again
-					effect_received.emit(source_asc, spec)
+						var source_asc = null
+						if spec.context and spec.context.instigator:
+							source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+							
+						effect_received.emit(source_asc, spec)
+						_trigger_effect_events(spec)
 					
-					# Wake up any passives for the refresh!
-					_trigger_effect_events(spec)
-					
-					# EXIT EARLY: We refreshed the old one, do not add the new one!
-					# Return the refreshed effect reference
 					return active_effect
 	
 	# 5. Create a variable to hold the newly generated effect
@@ -610,19 +612,24 @@ func _execute_active_spec(spec: GameplayEffectSpec) -> ActiveGameplayEffect:
 	# Broadcast to the UI and passive listeners
 	active_effect_added.emit(active_effect)
 	
+	# Explicitly check if it should be immediately suppressed upon application
+	_reevaluate_suppression_state()
+	
 	# Return the persistent effect so the inventory/ability can store the reference!
 	return active_effect
 
 
 ## Perfectly undoes an Active Effect's math and tags, and cleans it out of memory.
 func remove_active_effect(active_effect: ActiveGameplayEffect, skip_array_erase: bool = false) -> void:
-	for tag in active_effect.get_effect_def().granted_tags:
-		remove_tag(tag)
-		
-	for attr_name in active_effect.applied_deltas.keys():
-		var reverse_delta = -active_effect.applied_deltas[attr_name]
-		_apply_attribute_change(attr_name, reverse_delta)
-		
+	# Only reverse tags and attribute deltas if the effect is not currently suppressed
+	if not active_effect.is_suppressed:
+		for tag in active_effect.get_effect_def().granted_tags:
+			remove_tag(tag)
+			
+		for attr_name in active_effect.applied_deltas.keys():
+			var reverse_delta = -active_effect.applied_deltas[attr_name]
+			_apply_attribute_change(attr_name, reverse_delta)
+			
 	# Trigger Removal Cues
 	for cue_tag in active_effect.get_effect_def().removal_cue_tags:
 		execute_cue(cue_tag, {"target": get_parent()})
@@ -655,6 +662,57 @@ func remove_effects_from_source(source_node: Node) -> void:
 		# Safely check if the effect has a spec, a context, and an instigator that matches our query
 		if active_effect.spec and active_effect.spec.context and active_effect.spec.context.instigator == source_node:
 			remove_active_effect(active_effect)
+#endregion
+
+
+#region Effect Inhibition (Tag Suppression)
+## Evaluates all active gameplay effects against their suppression queries.
+## Safely handles cascading tag changes using an evaluation lock and queue flag.
+func _reevaluate_suppression_state() -> void:
+	if _is_evaluating_suppression:
+		_suppression_queued = true
+		return
+		
+	_is_evaluating_suppression = true
+	_suppression_queued = false
+	
+	for active_effect in _active_effects:
+		var effect = active_effect.get_effect_def()
+		if effect and effect.ongoing_suppression_query:
+			var should_be_suppressed = effect.ongoing_suppression_query.matches(self)
+			
+			if should_be_suppressed and not active_effect.is_suppressed:
+				_suppress_effect(active_effect)
+			elif not should_be_suppressed and active_effect.is_suppressed:
+				_unsuppress_effect(active_effect)
+				
+	_is_evaluating_suppression = false
+	
+	# If any granted tags added/removed during this sweep cascaded another request, evaluate it now safely.
+	if _suppression_queued:
+		_reevaluate_suppression_state()
+
+
+## Temporarily suspends an active effect's applied attribute deltas and granted tags.
+func _suppress_effect(active_effect: ActiveGameplayEffect) -> void:
+	active_effect.is_suppressed = true
+	
+	for attr_name in active_effect.applied_deltas.keys():
+		_apply_attribute_change(attr_name, -active_effect.applied_deltas[attr_name])
+		
+	for tag in active_effect.get_effect_def().granted_tags:
+		remove_tag(tag)
+
+
+## Restores a previously suppressed active effect's attribute deltas and granted tags.
+func _unsuppress_effect(active_effect: ActiveGameplayEffect) -> void:
+	active_effect.is_suppressed = false
+	
+	for attr_name in active_effect.applied_deltas.keys():
+		_apply_attribute_change(attr_name, active_effect.applied_deltas[attr_name])
+		
+	for tag in active_effect.get_effect_def().granted_tags:
+		add_tag(tag)
 #endregion
 
 
@@ -747,6 +805,7 @@ func add_tag(tag: StringName) -> void:
 		tag_added.emit(tag)
 	
 	tag_count_changed.emit(tag, _active_tags[tag])
+	_reevaluate_suppression_state()
 
 
 ## Decrements the reference count of a given tag, removing it if it reaches 0.
@@ -761,6 +820,8 @@ func remove_tag(tag: StringName) -> void:
 		tag_removed.emit(tag)
 	else:
 		tag_count_changed.emit(tag, _active_tags[tag])
+		
+	_reevaluate_suppression_state()
 
 
 ## Forcefully removes a tag regardless of its current reference count.
@@ -768,6 +829,7 @@ func clear_tag(tag: StringName) -> void:
 	if _active_tags.has(tag):
 		_active_tags.erase(tag)
 		tag_removed.emit(tag)
+		_reevaluate_suppression_state()
 #endregion
 
 
