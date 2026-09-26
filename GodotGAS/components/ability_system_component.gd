@@ -81,6 +81,7 @@ enum ActivationError {
 	ON_COOLDOWN,
 	FAILED_QUERY,
 	INSUFFICIENT_RESOURCES,
+	BLOCKED_BY_OTHER_ABILITY,
 	INTERNAL_ERROR
 }
 
@@ -298,14 +299,24 @@ func can_activate_ability(ability: GameplayAbility, emit_failure: bool = false) 
 		if emit_failure:
 			ability_activation_failed.emit(ability, ActivationError.ALREADY_ACTIVE, {})
 		return false
+		
+	# 1. Check Tag Relationship Blocking (Is another active ability blocking this one?)
+	for active_ability in _active_abilities:
+		if active_ability.is_active and active_ability != ability:
+			for blocked_tag in active_ability.block_abilities_with_tags:
+				# Support hierarchical blocking (e.g. blocking "Ability.Action" also blocks "Ability.Action.Melee")
+				if ability.ability_tag == blocked_tag or String(ability.ability_tag).begins_with(String(blocked_tag) + "."):
+					if emit_failure:
+						ability_activation_failed.emit(ability, ActivationError.BLOCKED_BY_OTHER_ABILITY, {"blocking_ability": active_ability})
+					return false
 	
-	# 1. Check Activation Query
+	# 2. Check Activation Query
 	if ability.activation_query and not ability.activation_query.matches(self):
 		if emit_failure: 
 			ability_activation_failed.emit(ability, ActivationError.FAILED_QUERY, {"query": ability.activation_query})
 		return false
 	
-	# 2. Check Cooldowns (Personal + Shared)
+	# 3. Check Cooldowns (Personal + Shared)
 	if ability.has_method("get_cooldown_tags"):
 		var cooldown_tags = ability.get_cooldown_tags()
 		if has_any_tags(cooldown_tags):
@@ -313,7 +324,7 @@ func can_activate_ability(ability: GameplayAbility, emit_failure: bool = false) 
 				ability_activation_failed.emit(ability, ActivationError.ON_COOLDOWN, {"tags": cooldown_tags})
 			return false
 	
-	# 3. Check Resource Costs, Fully supports ExecCalcs predicting math
+	# 4. Check Resource Costs, Fully supports ExecCalcs predicting math
 	if ability.cost_effect and not can_afford_cost(ability.cost_effect, ability.ability_level):
 		if emit_failure: 
 			ability_activation_failed.emit(ability, ActivationError.INSUFFICIENT_RESOURCES, {"effect": ability.cost_effect})
@@ -365,7 +376,8 @@ func cancel_abilities_with_tags(tags: Array[StringName]) -> void:
 			continue
 			
 		for tag in tags:
-			if ability.ability_tag == tag:
+			# Support hierarchical cancellation 
+			if ability.ability_tag == tag or String(ability.ability_tag).begins_with(String(tag) + "."):
 				ability.abort_ability()
 				break 
 				
@@ -533,16 +545,21 @@ func _apply_effect_spec(spec: GameplayEffectSpec) -> ActiveGameplayEffect:
 						# OVERFLOW
 						var source_asc = self
 						if spec.context and spec.context.instigator:
-							var instigator_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+							var instigator_asc = spec.context.instigator as AbilitySystemComponent
+							if not instigator_asc:
+								instigator_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
 							if instigator_asc:
 								source_asc = instigator_asc
+								
+						# FIX: Remove the stack BEFORE applying the overflow, so OVERRIDE evaluates against the clean base stat
+						if effect.clear_stack_on_overflow:
+							remove_active_effect(active_effect)
 								
 						for overflow_effect in effect.overflow_effects:
 							if overflow_effect:
 								apply_gameplay_effect(overflow_effect, source_asc, spec.level)
 								
 						if effect.clear_stack_on_overflow:
-							remove_active_effect(active_effect)
 							return null # Bypasses refresh and application
 					else:
 						# Add a new stack and accumulate math!
@@ -571,7 +588,9 @@ func _apply_effect_spec(spec: GameplayEffectSpec) -> ActiveGameplayEffect:
 						
 						var source_asc = null
 						if spec.context and spec.context.instigator:
-							source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+							source_asc = spec.context.instigator as AbilitySystemComponent
+							if not source_asc:
+								source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
 							
 						effect_received.emit(source_asc, spec)
 						_trigger_effect_events(spec)
@@ -590,7 +609,9 @@ func _apply_effect_spec(spec: GameplayEffectSpec) -> ActiveGameplayEffect:
 	# 6. Notify the Defender's UI that an effect was fully processed
 	var source_asc = null
 	if spec.context and spec.context.instigator:
-		source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent") # Adjust based on your node path
+		source_asc = spec.context.instigator as AbilitySystemComponent
+		if not source_asc:
+			source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
 		
 	effect_received.emit(source_asc, spec)
 	
@@ -787,7 +808,9 @@ func _evaluate_spec(spec: GameplayEffectSpec) -> void:
 				if mod.attribute_source == GameplayEffectModifier.AttributeSource.SOURCE:
 					# Grab from the Instigator (Attacker)
 					if spec.context and spec.context.instigator:
-						var source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+						var source_asc = spec.context.instigator as AbilitySystemComponent
+						if not source_asc:
+							source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
 						if source_asc:
 							var attr_data = source_asc.get_attribute(mod.backing_attribute_name)
 							if attr_data:

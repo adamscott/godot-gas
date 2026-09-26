@@ -3,7 +3,7 @@
 ## Defines the core execution logic, input routing, and effect application 
 ## pipelines for an ability. Intended to be extended by specific ability scripts.
 ##
-## @meta_addon: GodotGAS Version 1 (See plugin version for exact version)
+## @meta_addon: GodotGAS Version 1+ (See plugin version for exact version)
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
 
@@ -32,6 +32,12 @@ signal ability_ended(was_cancelled: bool)
 @export var ability_level: float = 1.0
 ## The query evaluated against the ASC to determine if this ability is allowed to activate.
 @export var activation_query: GameplayTagQuery
+
+@export_category("Tag Relationships")
+## Abilities currently running on the ASC that possess any of these tags will be instantly aborted when this ability activates.
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var cancel_abilities_with_tags: Array[StringName] = []
+## While this ability is active, any attempt to activate another ability possessing these tags will be denied.
+@export_custom(PROPERTY_HINT_NONE, "gas::tag") var block_abilities_with_tags: Array[StringName] = []
 
 @export_category("Ability Mechanics")
 ## The gameplay effect applied to the owner to deduct resources upon committing.
@@ -113,6 +119,10 @@ func try_activate(event_payload: Variant = null) -> bool:
 		
 	is_active = true
 	current_event_payload = event_payload # Store the payload for the logic to use
+	
+	# DECLARATIVE INTERRUPTION: Cancel overlapping abilities right as we commit to activating
+	if cancel_abilities_with_tags.size() > 0:
+		owner_asc.cancel_abilities_with_tags(cancel_abilities_with_tags)
 	
 	# Logic execution
 	var success = await _activate_ability()
