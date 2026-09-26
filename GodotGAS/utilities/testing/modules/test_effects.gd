@@ -1,0 +1,324 @@
+## Self-contained exhaustive test suite for the GodotGAS Effects Subsystem.
+##
+## Tests lifecycles, advanced stacking and overflows, SetByCaller injection,
+## Attribute-based scaling, tag suppression (inhibition), and cleansers.
+##
+## @meta_addon: GodotGAS Version 1.1.0+
+## @meta_author: YulRun (https://YulRun.Dev)
+## @meta_license: MIT
+
+class_name TestEffects extends GASTestBase
+
+# ---------------------------------------------------------
+# Mock Classes for Testing Environment
+# ---------------------------------------------------------
+class EffectsAttributeSet extends AttributeSet:
+	@export var health: AttributeData = AttributeData.new(100.0)
+	@export var mana: AttributeData = AttributeData.new(100.0)
+	@export var armor: AttributeData = AttributeData.new(0.0)
+	@export var attack_power: AttributeData = AttributeData.new(50.0)
+
+
+func _ready() -> void:
+	if get_parent() == get_tree().root:
+		await run_all_tests()
+
+
+func run_all_tests() -> void:
+	print_header("GodotGAS Subsystem Test: Gameplay Effects Engine")
+	
+	await _battery_lifecycles_and_turns()
+	await _battery_stacking_and_overflow()
+	await _battery_attribute_based_scaling()
+	await _battery_set_by_caller()
+	await _battery_inhibition_and_cleansers()
+	
+	print_summary()
+
+
+# ---------------------------------------------------------
+# Battery 1: Lifecycles & Turn-Based Processing
+# ---------------------------------------------------------
+func _battery_lifecycles_and_turns() -> void:
+	print_rich("\n[color=yellow]--- Battery 1: Duration Policies & Turn-Based Math ---[/color]")
+	
+	var asc := AbilitySystemComponent.new()
+	asc.name = "LifecycleASC"
+	asc.attribute_sets.append(EffectsAttributeSet.new())
+	add_child(asc)
+	
+	# 1. Instant Policy
+	var inst_mod := GameplayEffectModifier.new()
+	inst_mod.attribute_name = "health"
+	inst_mod.operation = GameplayEffectModifier.Operation.ADD
+	inst_mod.magnitude = -20.0
+	
+	var inst_effect := GameplayEffect.new()
+	inst_effect.policy = GameplayEffect.DurationPolicy.INSTANT
+	inst_effect.modifiers.append(inst_mod)
+	inst_effect.granted_tags.append(&"Status.ShouldFail") # Instant cannot grant tags
+	
+	var inst_result = asc.apply_gameplay_effect(inst_effect, asc, 1.0)
+	assert_true(inst_result != null, "1.01: Instant effect returns a valid tracking wrapper")
+	assert_eq(asc.get_attribute("health").current_value, 80.0, "1.02: Instant math evaluates immediately")
+	assert_false(asc.has_tag(&"Status.ShouldFail"), "1.03: Instant effects successfully ignore granted_tags")
+	assert_false(asc._active_effects.has(inst_result), "1.04: Instant wrapper is not permanently stored in memory")
+	
+	# 2. Duration Policy
+	var dur_mod := GameplayEffectModifier.new()
+	dur_mod.attribute_name = "armor"
+	dur_mod.operation = GameplayEffectModifier.Operation.ADD
+	dur_mod.magnitude = 50.0
+	
+	var dur_effect := GameplayEffect.new()
+	dur_effect.policy = GameplayEffect.DurationPolicy.DURATION
+	dur_effect.duration = 0.2
+	dur_effect.modifiers.append(dur_mod)
+	dur_effect.granted_tags.append(&"Status.Armored")
+	
+	var dur_result = asc.apply_gameplay_effect(dur_effect, asc, 1.0)
+	assert_eq(asc.get_attribute("armor").current_value, 50.0, "1.05: Duration effect math applies immediately")
+	assert_true(asc.has_tag(&"Status.Armored"), "1.06: Duration effect granted state tag")
+	assert_true(asc._active_effects.has(dur_result), "1.07: Duration effect stored in ASC memory")
+	
+	await get_tree().create_timer(0.25).timeout # Yield for expiration
+	
+	assert_eq(asc.get_attribute("armor").current_value, 0.0, "1.08: Duration expiration perfectly reversed math")
+	assert_false(asc.has_tag(&"Status.Armored"), "1.09: Duration expiration purged granted tags")
+	assert_false(asc._active_effects.has(dur_result), "1.10: Expired effect safely erased from ASC memory")
+	
+	# 3. Turn-Based Policy
+	asc.get_attribute("health").current_value = 100.0
+	
+	var turn_mod := GameplayEffectModifier.new()
+	turn_mod.attribute_name = "health"
+	turn_mod.operation = GameplayEffectModifier.Operation.ADD
+	turn_mod.magnitude = -10.0
+	
+	var turn_effect := GameplayEffect.new()
+	turn_effect.policy = GameplayEffect.DurationPolicy.TURN_BASED
+	turn_effect.duration_turns = 2
+	turn_effect.period = 1.0 # Tells system it's a DoT
+	turn_effect.tick_on_turn_start = true
+	turn_effect.modifiers.append(turn_mod)
+	
+	var turn_result = asc.apply_gameplay_effect(turn_effect, asc, 1.0)
+	assert_eq(asc.get_attribute("health").current_value, 100.0, "1.11: Turn-Based DoT does not apply initial math immediately")
+	
+	asc.advance_turn()
+	assert_eq(asc.get_attribute("health").current_value, 90.0, "1.12: Turn 1 successfully evaluated DoT math")
+	assert_true(asc._active_effects.has(turn_result), "1.13: Turn-based effect survives first turn")
+	
+	asc.advance_turn()
+	assert_eq(asc.get_attribute("health").current_value, 80.0, "1.14: Turn 2 successfully evaluated DoT math")
+	assert_false(asc._active_effects.has(turn_result), "1.15: Turn-based effect auto-expires after final turn")
+
+	asc.queue_free()
+
+
+# ---------------------------------------------------------
+# Battery 2: Advanced Stacking & Overflow Engine
+# ---------------------------------------------------------
+func _battery_stacking_and_overflow() -> void:
+	print_rich("\n[color=yellow]--- Battery 2: Advanced Stacking & Overflows ---[/color]")
+	
+	var asc := AbilitySystemComponent.new()
+	asc.name = "StackingASC"
+	asc.attribute_sets.append(EffectsAttributeSet.new())
+	add_child(asc)
+	
+	# Overflow Payload (Frozen)
+	var frozen_mod := GameplayEffectModifier.new()
+	frozen_mod.attribute_name = "armor"
+	frozen_mod.operation = GameplayEffectModifier.Operation.OVERRIDE
+	frozen_mod.magnitude = -100.0
+	
+	var frozen_effect := GameplayEffect.new()
+	frozen_effect.policy = GameplayEffect.DurationPolicy.INFINITE
+	frozen_effect.modifiers.append(frozen_mod)
+	frozen_effect.granted_tags.append(&"Status.Frozen")
+	
+	# Stacking Payload (Chill)
+	var chill_mod := GameplayEffectModifier.new()
+	chill_mod.attribute_name = "armor"
+	chill_mod.operation = GameplayEffectModifier.Operation.ADD
+	chill_mod.magnitude = -10.0
+	
+	var chill_effect := GameplayEffect.new()
+	chill_effect.policy = GameplayEffect.DurationPolicy.INFINITE
+	chill_effect.stacking_policy = GameplayEffect.StackingPolicy.REFRESH_DURATION
+	chill_effect.max_stacks = 3
+	chill_effect.clear_stack_on_overflow = true
+	chill_effect.modifiers.append(chill_mod)
+	chill_effect.granted_tags.append(&"Status.Chilled")
+	chill_effect.overflow_effects.append(frozen_effect)
+	
+	# Execute
+	var chill_instance = asc.apply_gameplay_effect(chill_effect, asc, 1.0)
+	assert_eq(asc.get_attribute("armor").current_value, -10.0, "2.01: Base stack applied correctly")
+	
+	asc.apply_gameplay_effect(chill_effect, asc, 1.0)
+	assert_eq(asc.get_attribute("armor").current_value, -20.0, "2.02: Second stack accumulates math properly")
+	assert_eq(chill_instance.stack_count, 2, "2.03: Stack count increments safely")
+	
+	asc.apply_gameplay_effect(chill_effect, asc, 1.0)
+	assert_eq(asc.get_attribute("armor").current_value, -30.0, "2.04: Third stack reached (Max)")
+	
+	asc.apply_gameplay_effect(chill_effect, asc, 1.0) # OVERFLOW
+	assert_true(asc.has_tag(&"Status.Frozen"), "2.05: Overflow triggered the secondary payload")
+	assert_false(asc.has_tag(&"Status.Chilled"), "2.06: clear_stack_on_overflow purged original stacks")
+	assert_eq(asc.get_attribute("armor").current_value, -100.0, "2.07: Math perfectly evaluated stack purge and new overflow baseline")
+
+	asc.queue_free()
+
+
+# ---------------------------------------------------------
+# Battery 3: Attribute-Based Scaling (Source & Target)
+# ---------------------------------------------------------
+func _battery_attribute_based_scaling() -> void:
+	print_rich("\n[color=yellow]--- Battery 3: Attribute-Based Modifiers ---[/color]")
+	
+	var defender := AbilitySystemComponent.new()
+	defender.name = "DefenderASC"
+	var def_attrs := EffectsAttributeSet.new()
+	def_attrs.health.current_value = 100.0
+	def_attrs.attack_power.current_value = 20.0
+	defender.attribute_sets.append(def_attrs)
+	add_child(defender)
+	
+	var attacker := AbilitySystemComponent.new()
+	attacker.name = "AttackerASC"
+	var att_attrs := EffectsAttributeSet.new()
+	att_attrs.attack_power.current_value = 80.0
+	attacker.attribute_sets.append(att_attrs)
+	add_child(attacker)
+	
+	# Target-Based Heal (Defender heals 50% of their own 20 AP)
+	var tgt_mod := GameplayEffectModifier.new()
+	tgt_mod.attribute_name = "health"
+	tgt_mod.operation = GameplayEffectModifier.Operation.ADD
+	tgt_mod.magnitude_calculation = GameplayEffectModifier.MagnitudeCalculationType.ATTRIBUTE_BASED
+	tgt_mod.attribute_source = GameplayEffectModifier.AttributeSource.TARGET
+	tgt_mod.backing_attribute_name = "attack_power"
+	tgt_mod.attribute_multiplier = 0.5
+	
+	var tgt_effect := GameplayEffect.new()
+	tgt_effect.policy = GameplayEffect.DurationPolicy.INSTANT
+	tgt_effect.modifiers.append(tgt_mod)
+	
+	defender.apply_gameplay_effect(tgt_effect, defender, 1.0)
+	assert_eq(defender.get_attribute("health").current_value, 110.0, "3.01: TARGET-sourced math evaluated correctly (100 + 10)")
+	
+	# Source-Based Damage (Defender takes 1.5x Attacker's 80 AP)
+	var src_mod := GameplayEffectModifier.new()
+	src_mod.attribute_name = "health"
+	src_mod.operation = GameplayEffectModifier.Operation.ADD
+	src_mod.magnitude_calculation = GameplayEffectModifier.MagnitudeCalculationType.ATTRIBUTE_BASED
+	src_mod.attribute_source = GameplayEffectModifier.AttributeSource.SOURCE
+	src_mod.backing_attribute_name = "attack_power"
+	src_mod.attribute_multiplier = -1.5
+	
+	var src_effect := GameplayEffect.new()
+	src_effect.policy = GameplayEffect.DurationPolicy.INSTANT
+	src_effect.modifiers.append(src_mod)
+	
+	# Explicitly pass the attacker via Spec
+	var spec := GameplayEffectSpec.new(src_effect, GameplayEffectContext.new(attacker), 1.0)
+	defender.apply_effect_spec(spec)
+	
+	assert_eq(defender.get_attribute("health").current_value, -10.0, "3.02: SOURCE-sourced math evaluated correctly (110 - 120)")
+
+	defender.queue_free()
+	attacker.queue_free()
+
+
+# ---------------------------------------------------------
+# Battery 4: SetByCaller Injection
+# ---------------------------------------------------------
+func _battery_set_by_caller() -> void:
+	print_rich("\n[color=yellow]--- Battery 4: SetByCaller Math Injection ---[/color]")
+	
+	var asc := AbilitySystemComponent.new()
+	asc.name = "CallerASC"
+	asc.attribute_sets.append(EffectsAttributeSet.new())
+	add_child(asc)
+	
+	asc.get_attribute("mana").current_value = 100.0
+	
+	var sbc_mod := GameplayEffectModifier.new()
+	sbc_mod.attribute_name = "mana"
+	sbc_mod.operation = GameplayEffectModifier.Operation.ADD
+	sbc_mod.magnitude_calculation = GameplayEffectModifier.MagnitudeCalculationType.SET_BY_CALLER
+	sbc_mod.set_by_caller_tag = &"Data.Damage.Mana"
+	
+	var sbc_effect := GameplayEffect.new()
+	sbc_effect.policy = GameplayEffect.DurationPolicy.INSTANT
+	sbc_effect.modifiers.append(sbc_mod)
+	
+	# Uninjected Execution
+	var spec1 := GameplayEffectSpec.new(sbc_effect, GameplayEffectContext.new(asc), 1.0)
+	asc.apply_effect_spec(spec1)
+	assert_eq(asc.get_attribute("mana").current_value, 100.0, "4.01: SetByCaller safely defaults to 0.0 if not injected")
+	
+	# Injected Execution
+	var spec2 := GameplayEffectSpec.new(sbc_effect, GameplayEffectContext.new(asc), 1.0)
+	spec2.set_set_by_caller_magnitude(&"Data.Damage.Mana", -60.0)
+	asc.apply_effect_spec(spec2)
+	assert_eq(asc.get_attribute("mana").current_value, 40.0, "4.02: SetByCaller successfully extracted and evaluated dynamic math")
+	
+	# Fallback/Default test via getter
+	assert_eq(spec2.get_set_by_caller_magnitude(&"Data.Ghost.Tag", 5.0), 5.0, "4.03: Spec getter safely routes default values")
+
+	asc.queue_free()
+
+
+# ---------------------------------------------------------
+# Battery 5: Inhibition & Cleansers
+# ---------------------------------------------------------
+func _battery_inhibition_and_cleansers() -> void:
+	print_rich("\n[color=yellow]--- Battery 5: Tag Suppression & Cleansers ---[/color]")
+	
+	var asc := AbilitySystemComponent.new()
+	asc.name = "InhibitASC"
+	asc.attribute_sets.append(EffectsAttributeSet.new())
+	add_child(asc)
+	
+	asc.get_attribute("armor").current_value = 0.0
+	
+	# 1. Inhibition
+	var supp_query := GameplayTagQuery.new()
+	supp_query.require_exact_tags.append(&"State.Silenced")
+	
+	var buff_mod := GameplayEffectModifier.new()
+	buff_mod.attribute_name = "armor"
+	buff_mod.operation = GameplayEffectModifier.Operation.ADD
+	buff_mod.magnitude = 50.0
+	
+	var buff_effect := GameplayEffect.new()
+	buff_effect.policy = GameplayEffect.DurationPolicy.INFINITE
+	buff_effect.modifiers.append(buff_mod)
+	buff_effect.granted_tags.append(&"Status.Armored")
+	buff_effect.ongoing_suppression_query = supp_query
+	
+	var active_buff = asc.apply_gameplay_effect(buff_effect, asc, 1.0)
+	assert_eq(asc.get_attribute("armor").current_value, 50.0, "5.01: Inhibitable effect applied stats correctly")
+	
+	asc.add_tag(&"State.Silenced")
+	assert_eq(asc.get_attribute("armor").current_value, 0.0, "5.02: Effect suppressed (Math reversed)")
+	assert_false(asc.has_tag(&"Status.Armored"), "5.03: Effect suppressed (Tags dropped)")
+	assert_true(active_buff.is_suppressed, "5.04: Wrapper physically tracking suppressed state")
+	
+	asc.remove_tag(&"State.Silenced")
+	assert_eq(asc.get_attribute("armor").current_value, 50.0, "5.05: Effect unsuppressed (Math restored)")
+	assert_true(asc.has_tag(&"Status.Armored"), "5.06: Effect unsuppressed (Tags restored)")
+	
+	# 2. Cleanser Pattern
+	var cure_effect := GameplayEffect.new()
+	cure_effect.policy = GameplayEffect.DurationPolicy.INSTANT
+	cure_effect.remove_effects_with_tags.append(&"Status.Armored")
+	
+	asc.apply_gameplay_effect(cure_effect, asc, 1.0)
+	assert_false(asc._active_effects.has(active_buff), "5.07: Cleanser pattern physically stripped targeted effect")
+	assert_eq(asc.get_attribute("armor").current_value, 0.0, "5.08: Math correctly reversed upon forced cleanse")
+
+	asc.queue_free()

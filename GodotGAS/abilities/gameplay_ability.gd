@@ -281,7 +281,7 @@ func task_wait_delay(duration: float) -> void:
 
 ## Yields execution until the ASC receives a specific gameplay event tag.
 ## Uses a loop to continuously filter incoming signals until the correct tag is intercepted.
-func task_wait_for_event(target_tag: StringName) -> Dictionary:
+func task_wait_for_event(target_tag: StringName) -> Variant:
 	if not owner_asc: return {}
 	
 	while is_active:
