@@ -751,6 +751,24 @@ func _evaluate_spec(spec: GameplayEffectSpec) -> void:
 				magnitude = spec.mutated_magnitudes.get(attr_name, 0.0) 
 			GameplayEffectModifier.MagnitudeCalculationType.SET_BY_CALLER:
 				magnitude = spec.get_set_by_caller_magnitude(mod.set_by_caller_tag)
+			GameplayEffectModifier.MagnitudeCalculationType.ATTRIBUTE_BASED:
+				var backing_val: float = 0.0
+				
+				if mod.attribute_source == GameplayEffectModifier.AttributeSource.SOURCE:
+					# Grab from the Instigator (Attacker)
+					if spec.context and spec.context.instigator:
+						var source_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+						if source_asc:
+							var attr_data = source_asc.get_attribute(mod.backing_attribute_name)
+							if attr_data:
+								backing_val = attr_data.current_value
+				else:
+					# Grab from the Target (Defender)
+					var attr_data = get_attribute(mod.backing_attribute_name)
+					if attr_data:
+						backing_val = attr_data.current_value
+						
+				magnitude = backing_val * mod.attribute_multiplier
 		
 		var current_val = 0.0
 		var attr_data = get_attribute(attr_name)

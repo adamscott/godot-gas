@@ -1,8 +1,8 @@
 ## A mathematical rule detailing how a Gameplay Effect alters an Attribute.
 ##
-## Supports both flat values, level-based curve scaling, and dynamic SetByCaller injection.
+## Supports flat values, level-based curve scaling, SetByCaller injection, and Attribute-Based scaling.
 ##
-## @meta_addon: GodotGAS Version 1 (See plugin version for exact version)
+## @meta_addon: GodotGAS Version 1+ (See plugin version for exact version)
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
 
@@ -20,7 +20,14 @@ enum Operation {
 ## Defines where the modifier gets its mathematical value from.
 enum MagnitudeCalculationType {
 	STATIC,         # Uses the flat magnitude or scaling curve defined in the inspector
-	SET_BY_CALLER   # Ignores static values; pulls the number from the Spec at runtime using a tag
+	SET_BY_CALLER,  # Ignores static values; pulls the number from the Spec at runtime using a tag
+	ATTRIBUTE_BASED # Scales directly off an existing attribute from the source or target
+}
+
+## Defines which entity to pull the backing attribute from.
+enum AttributeSource {
+	SOURCE, # The entity that cast the effect
+	TARGET  # The entity receiving the effect
 }
 
 ## The exact variable name of the attribute in the AttributeSet (e.g., "health" or "mana").
@@ -45,6 +52,14 @@ enum MagnitudeCalculationType {
 ## If magnitude_calculation is SET_BY_CALLER, this is the tag the ASC will look for
 ## inside the Spec to find the dynamic value.
 @export_custom(PROPERTY_HINT_NONE, "gas::tag") var set_by_caller_tag: StringName = &""
+
+@export_group("Attribute Based Calculation")
+## Whether to pull the attribute from the entity casting the effect (SOURCE) or receiving the effect (TARGET).
+@export var attribute_source: AttributeSource = AttributeSource.SOURCE
+## The exact name of the attribute to scale off of (e.g., "attack_power").
+@export var backing_attribute_name: String = ""
+## A multiplier applied to the fetched attribute's current value (e.g., 1.5 * AttackPower).
+@export var attribute_multiplier: float = 1.0
 
 
 #region Math Evaluation
