@@ -2,7 +2,7 @@
 ##
 ## Manages tags, attributes, and abilities for a specific entity.
 ##
-## @meta_addon: GodotGAS Version 1 (See plugin version for exact version)
+## @meta_addon: GodotGAS Version 1+ (See plugin version for exact version)
 ## @meta_author: YulRun (https://YulRun.Dev)
 ## @meta_license: MIT
 
@@ -523,11 +523,41 @@ func _apply_effect_spec(spec: GameplayEffectSpec) -> ActiveGameplayEffect:
 	_evaluate_spec(spec)
 	
 	# 4. Handle Stacking & Refreshing
-	if effect.policy == GameplayEffect.DurationPolicy.DURATION or effect.policy == GameplayEffect.DurationPolicy.TURN_BASED:
+	if effect.policy != GameplayEffect.DurationPolicy.INSTANT:
 		if effect.stacking_policy == GameplayEffect.StackingPolicy.REFRESH_DURATION:
 			# Search to see if we already have this exact effect definition running
 			for active_effect in _active_effects:
 				if active_effect.spec.effect_def == effect:
+					
+					if effect.max_stacks > 0 and active_effect.stack_count >= effect.max_stacks:
+						# OVERFLOW
+						var source_asc = self
+						if spec.context and spec.context.instigator:
+							var instigator_asc = spec.context.instigator.get_node_or_null("AbilitySystemComponent")
+							if instigator_asc:
+								source_asc = instigator_asc
+								
+						for overflow_effect in effect.overflow_effects:
+							if overflow_effect:
+								apply_gameplay_effect(overflow_effect, source_asc, spec.level)
+								
+						if effect.clear_stack_on_overflow:
+							remove_active_effect(active_effect)
+							return null # Bypasses refresh and application
+					else:
+						# Add a new stack and accumulate math!
+						active_effect.stack_count += 1
+						
+						if spec.period <= 0.0:
+							var new_deltas = _commit_spec_math(spec)
+							for attr_name in new_deltas:
+								active_effect.applied_deltas[attr_name] = active_effect.applied_deltas.get(attr_name, 0.0) + new_deltas[attr_name]
+							
+							# MATH TRAP FIX: If it is currently suppressed, immediately back out the newly added deltas!
+							if active_effect.is_suppressed:
+								for attr_name in new_deltas:
+									_apply_attribute_change(attr_name, -new_deltas[attr_name])
+					
 					# We found it! Reset its clock back to full based on the dynamically altered Spec!
 					if effect.policy == GameplayEffect.DurationPolicy.DURATION:
 						active_effect.time_remaining = spec.duration 

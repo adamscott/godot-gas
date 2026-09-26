@@ -38,6 +38,14 @@ enum StackingPolicy {
 ## Note: For Turn-Based effects, set this to 1.0 to tell the system it is a DoT, not a Buff.
 @export_range(0.0, 999.0, 0.1, "or_greater") var period: float = 0.0
 
+@export_category("Stacking & Overflows")
+## The maximum number of stacks this effect can accumulate. 0 means infinite.
+@export var max_stacks: int = 0
+## Effects to apply to the target when the stack limit is reached and a new stack is attempted.
+@export var overflow_effects: Array[GameplayEffect] = []
+## If true, hitting the stack cap and attempting to add another stack will completely purge this effect.
+@export var clear_stack_on_overflow: bool = false
+
 @export_category("Turn Based Settings")
 ## How many turns this effect lasts (only used if policy is TURN_BASED).
 @export_range(1, 999) var duration_turns: int = 1

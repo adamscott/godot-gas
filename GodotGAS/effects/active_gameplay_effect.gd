@@ -28,6 +28,9 @@ var time_until_next_tick: float = 0.0
 ## Indicates if the effect is currently suspended by an ongoing tag query.
 var is_suppressed: bool = false
 
+## The current number of stacks this effect has accumulated.
+var stack_count: int = 1
+
 
 #region Initialization
 func _init(in_spec: GameplayEffectSpec) -> void:
