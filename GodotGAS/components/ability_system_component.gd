@@ -40,6 +40,12 @@ signal active_effect_removed(active_effect: ActiveGameplayEffect)
 ## The payload dictionary contains context (e.g., {"tags": [array of blocking tags]}).
 signal ability_activation_failed(ability: GameplayAbility, reason: ActivationError, payload: Dictionary)
 
+## Fired when an ability has been granted to the this ASC.
+signal ability_grant_added(ability: GameplayAbility)
+
+## Fired when an ability grant has been removed to the this ASC.
+signal ability_grant_removed(ability: GameplayAbility)
+
 ## Fired when THIS ASC receives an effect from someone else. 
 ## UI listens to this to spawn Damage Numbers, "Miss!", or "Blocked!" text.
 signal effect_received(source_asc: AbilitySystemComponent, spec: GameplayEffectSpec)
@@ -260,6 +266,7 @@ func grant_ability(ability_node: GameplayAbility) -> void:
 	
 	ability_node.owner_asc = self
 	_add_active_ability(ability_node)
+	ability_grant_added.emit(ability_node)
 
 
 ## Grants an ability directly from a GDScript resource (Code-First approach).
@@ -285,6 +292,7 @@ func grant_ability_from_script(ability_script: Script) -> GameplayAbility:
 ## Removes an ability from this ASC.
 func remove_ability(ability: GameplayAbility) -> void:
 	_remove_active_ability(ability)
+	ability_grant_removed.emit(ability)
 	ability.queue_free()
 
 
